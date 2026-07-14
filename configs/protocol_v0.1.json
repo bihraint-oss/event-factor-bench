@@ -1,0 +1,100 @@
+{
+  "benchmark": "EventFactorBench",
+  "version": "0.1.0",
+  "precommit_audit": {
+    "path": "audits/development_precommit_v0.1.json",
+    "scope": "development_only"
+  },
+  "retrieval": {
+    "gamma_endpoint": "https://gamma-api.polymarket.com/events/keyset",
+    "clob_endpoint": "https://clob.polymarket.com/batch-prices-history",
+    "discovery_start_inclusive": "2026-06-01T00:00:00Z",
+    "discovery_end_exclusive": "2026-07-14T00:00:00Z",
+    "gamma_title_search": "above",
+    "history_fidelity_minutes": 1,
+    "history_window_seconds": 2700
+  },
+  "universe": {
+    "event_title_regex": "^(Bitcoin|Ethereum) above ___ on .+, (?:1[0-2]|[1-9])(?:AM|PM) ET\\?$",
+    "assets": [
+      "Bitcoin",
+      "Ethereum"
+    ],
+    "minimum_thresholds_per_event": 8,
+    "required_outcomes": [
+      "Yes",
+      "No"
+    ],
+    "required_resolution_status": "resolved",
+    "accepted_gamma_candidate_yes_probabilities": [
+      0.0,
+      1.0
+    ],
+    "canonical_label_source": "Polygon ConditionalTokens ConditionResolution payout vector",
+    "conditional_tokens_address": "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+    "condition_resolution_topic": "0xb44d84d3289691f71497564b85d4233648d9dbae8cbdbb4329f301c3a0185894",
+    "resolution_grace_seconds": 64800,
+    "accepted_canonical_payout_vectors": [
+      [
+        1,
+        0
+      ],
+      [
+        0,
+        1
+      ]
+    ]
+  },
+  "splits": {
+    "development": {
+      "start_inclusive": "2026-06-01T00:00:00Z",
+      "end_exclusive": "2026-06-20T00:00:00Z"
+    },
+    "validation": {
+      "start_inclusive": "2026-06-20T00:00:00Z",
+      "end_exclusive": "2026-06-30T00:00:00Z"
+    },
+    "holdout": {
+      "start_inclusive": "2026-06-30T00:00:00Z",
+      "end_exclusive": "2026-07-14T00:00:00Z"
+    }
+  },
+  "forecast": {
+    "primary_horizon_seconds": 1800,
+    "secondary_horizons_seconds": [
+      900
+    ],
+    "max_staleness_seconds": 120,
+    "baseline": "raw_yes_reference_probability",
+    "primary_method": "unweighted_nonincreasing_pav_projection",
+    "comparators": [
+      "event_balanced_platt",
+      "event_balanced_beta",
+      "beta_then_nonincreasing_pav"
+    ],
+    "calibration_training_split": "development",
+    "calibration_epsilon": 1e-06,
+    "calibration_l2": 0.001,
+    "calibration_tolerance": 1e-09,
+    "calibration_max_iterations": 100,
+    "metric_log_loss_epsilon": 1e-06
+  },
+  "inference": {
+    "statistical_unit": "event",
+    "block": "UTC calendar day",
+    "bootstrap": "paired hierarchical block/event percentile bootstrap",
+    "confidence": 0.95,
+    "resamples": 10000,
+    "seed": 260715
+  },
+  "claim_gate": {
+    "minimum_holdout_events": 500,
+    "minimum_holdout_utc_days": 14,
+    "minimum_event_coverage": 0.95,
+    "minimum_contract_coverage": 0.95,
+    "minimum_relative_brier_improvement": 0.001,
+    "require_brier_ci_lower_above_zero": true,
+    "maximum_event_macro_log_loss_regression": 0.001,
+    "require_nonnegative_asset_subgroups": true
+  }
+}

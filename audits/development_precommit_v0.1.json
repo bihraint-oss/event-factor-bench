@@ -1,0 +1,146 @@
+{
+  "schema_version": "event-factor-bench-development-precommit-audit-v1",
+  "generated_at_utc": "2026-07-14T20:00:11Z",
+  "final_protocol": {
+    "path": "configs/protocol_v0.1.json",
+    "sha256": "79877551a7fa2ff8b26f15fb9d70aeb27c9b111ce204c1ac9d9f1aac3fc86320"
+  },
+  "scope": {
+    "splits_accessed": [
+      "development"
+    ],
+    "development_start_inclusive": "2026-06-01T00:00:00Z",
+    "development_end_exclusive": "2026-06-20T00:00:00Z",
+    "validation_accessed": false,
+    "holdout_accessed": false,
+    "model_scores_computed": false,
+    "purpose": "operational feasibility and fail-closed protocol parameter selection before the public protocol tag"
+  },
+  "resolution_latency": {
+    "method": "For each strict development event, query Polygon ConditionalTokens ConditionResolution for the lowest and highest numeric threshold, require one canonical non-removed binary payout per condition, verify the canonical block hash, and require agreement with the terminal Gamma candidate label.",
+    "provider_origin": "https://polygon.gateway.tenderly.co",
+    "chain_id": 137,
+    "conditional_tokens_address": "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+    "condition_resolution_topic": "0xb44d84d3289691f71497564b85d4233648d9dbae8cbdbb4329f301c3a0185894",
+    "probe_resolution_grace_seconds": 86400,
+    "strict_development_events": 884,
+    "sampled_extreme_conditions": 1768,
+    "status_counts": {
+      "agreed": 1768,
+      "ambiguous": 0,
+      "gamma_disagreement": 0,
+      "missing": 0
+    },
+    "latency_seconds": {
+      "minimum": 669,
+      "p50": 811,
+      "p90": 5786,
+      "p95": 13979,
+      "p99": 30680,
+      "maximum": 39472
+    },
+    "within_event_extreme_resolution_spread_seconds": {
+      "events_with_different_timestamps": 805,
+      "events_total": 884,
+      "minimum": 0,
+      "p50": 15,
+      "p90": 175,
+      "p95": 297,
+      "p99": 3192,
+      "maximum": 33791
+    },
+    "decision": {
+      "resolution_grace_seconds": 64800,
+      "margin_over_development_maximum_seconds": 25328,
+      "reason": "18 hours is above the observed 10.96-hour development maximum while retaining a 7.04-hour development margin; the formal run still verifies every condition and fails closed outside the window."
+    },
+    "artifact_hashes": {
+      "candidate_rows_v0.1.csv.gz": "917a330e53be91c69b98750b75d2241ccf683c35943a8a5e14f4d5d46c940cc2",
+      "collector_manifest.json": "194a51a46ac7416b2da918526096d4fe0d2aae3809a95e1542332b37f1f0cf4c",
+      "frozen_v0.1.csv.gz": "0716537f0587994c36802f88e42c40b13a22fd1ed8af35f6712926de125ae12f",
+      "frozen_v0.1.csv": "2239a69b47450e9b5bf8226652283fe1cdc8fa603d8829f8277774d200aa5117",
+      "manifest_v0.1.json": "90b556d265d3eeec6c98ac239248778d9fb69818de756e5c1822e8c777f27742",
+      "report.json": "3dfafe4a8cb93189813969d2d6542d4483e6c05d7032e3f9c8d3602576eabe2e"
+    },
+    "rpc_evidence": {
+      "head_block_number": 90234904,
+      "head_block_hash": "0x216aaf3823276e26435249fe02f32127374554f0a5bab1354d98e5584ef35c9f",
+      "head_block_timestamp": "2026-07-14T19:29:11Z",
+      "raw_rpc_responses": 2003,
+      "chain_source_bundles": 1563,
+      "search_windows": 19,
+      "eth_getLogs_queries": 76
+    },
+    "limitations": [
+      "This was an isolated development-only latency probe, not the formal frozen run.",
+      "Reference probabilities were fixed dummy values and were not scored or used in the latency decision.",
+      "Only the two extreme thresholds were sampled here; the formal run verifies every retained condition."
+    ]
+  },
+  "history_freshness": {
+    "method": "Collect official development-only Gamma and CLOB history responses once, then replay the same 903 archived responses offline under candidate maximum-age limits of 120, 180, 240, 300, and 600 seconds.",
+    "strict_development_events": 884,
+    "strict_markets_before_history": 15920,
+    "archived_api_responses": {
+      "total": 903,
+      "gamma": 19,
+      "clob": 884
+    },
+    "sensitivity": {
+      "120": {
+        "event_coverage_1800": 0.9332579185520362,
+        "row_coverage_1800": 0.9326633165829146,
+        "event_coverage_900": 0.9457013574660633,
+        "row_coverage_900": 0.9449748743718593,
+        "retained_events_1800": 825,
+        "retained_rows_1800": 14848,
+        "retained_events_900": 836,
+        "retained_rows_900": 15044
+      },
+      "180": {
+        "retained_events_1800": 825,
+        "retained_rows_1800": 14848,
+        "retained_events_900": 836,
+        "retained_rows_900": 15044
+      },
+      "240": {
+        "retained_events_1800": 825,
+        "retained_rows_1800": 14848,
+        "retained_events_900": 836,
+        "retained_rows_900": 15044
+      },
+      "300": {
+        "retained_events_1800": 825,
+        "retained_rows_1800": 14848,
+        "retained_events_900": 836,
+        "retained_rows_900": 15044
+      },
+      "600": {
+        "event_coverage_1800": 0.9355203619909502,
+        "row_coverage_1800": 0.9349246231155779,
+        "event_coverage_900": 0.9457013574660633,
+        "row_coverage_900": 0.9449748743718593,
+        "retained_events_1800": 827,
+        "retained_rows_1800": 14884,
+        "retained_events_900": 836,
+        "retained_rows_900": 15044
+      }
+    },
+    "decision": {
+      "max_staleness_seconds": 120,
+      "minimum_holdout_event_coverage": 0.95,
+      "minimum_holdout_contract_coverage": 0.95,
+      "reason": "Relaxing through 300 seconds recovered no rows. A 600-second cap recovered only two 30-minute events and still remained below 95%, so v0.1 retains the stricter point-in-time rule and allows the holdout claim gate to fail if source coverage is insufficient."
+    },
+    "artifact_hashes": {
+      "source_protocol_v0.1.json": "f219c918659a98fb4e10fe496958f0ef84a6cebfe2a1d21603dea53c803d694c",
+      "source_manifest.json": "aca10ea1e339298d2d0accc36fcce1f4d3d359ec566d17b26f0787c4837b0b1c",
+      "source_selection_audit.json": "92a50739786fc72d24b30f8f4ed52b08f5ba415bde26642b2410310de20bfdc9",
+      "source_candidate_rows_v0.1.csv.gz": "df4025d6f9039771514bdb15282a68424abdab98951a6cb2343ef235505d89cc",
+      "source_candidate_rows_v0.1.csv": "0150133a5b7a66bc5a8812d4d940f8161d8e00d57e70bc0fb251b1b5319a0b2a",
+      "sensitivity_report.json": "8449425b4dfd8e84422068820bc801b129bf39d6ad5c1ea6de7f7e4c2125e38d"
+    },
+    "exact_120_second_candidate_replay": true
+  },
+  "immutability": "This audit, the protocol, evaluator, tests, and claim gate are included in protocol-v0.1 and may not change in the evidence or result commits."
+}

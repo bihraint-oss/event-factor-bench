@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.6"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+      - name: Validate committed frozen evidence without scoring
+        if: ${{ hashFiles('data/frozen_v0.1.csv.gz') != '' }}
+        run: make verify-evidence
+      - name: Verify committed frozen result
+        if: ${{ hashFiles('results/frozen_v0.1/results.json') != '' }}
+        run: make verify-frozen
+      - if: matrix.python-version == '3.13'
+        run: uv build --no-sources

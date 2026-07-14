@@ -1,0 +1,11 @@
+.coverage
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.py[cod]
+artifacts/
+data/raw_chain_v0.1/
+build/
+dist/
+*.egg-info/

@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "event-factor-bench"
+version = "0.1.0"
+description = "Leakage-audited mathematical core for event-balanced probability-factor benchmarks"
+requires-python = ">=3.11"
+readme = "README.md"
+license = "MIT"
+authors = [
+  { name = "bihraint-oss" },
+]
+keywords = [
+  "prediction-markets",
+  "calibration",
+  "isotonic-regression",
+  "benchmark",
+  "proper-scoring-rules",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "numpy>=1.26",
+]
+
+[project.urls]
+Homepage = "https://github.com/bihraint-oss/event-factor-bench"
+Repository = "https://github.com/bihraint-oss/event-factor-bench"
+Issues = "https://github.com/bihraint-oss/event-factor-bench/issues"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.11",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=event_factor_bench --cov-report=term-missing --cov-fail-under=90"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["event_factor_bench"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
