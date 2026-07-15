@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 from event_factor_bench.evaluation import (
@@ -15,6 +16,35 @@ from event_factor_bench.evaluation import (
     sha256_gzip_content,
     validate_frozen_inputs,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _require_canonical_paths(args: argparse.Namespace) -> None:
+    expected = {
+        "data": PROJECT_ROOT / "data/frozen_v0.1.csv.gz",
+        "protocol": PROJECT_ROOT / "configs/protocol_v0.1.json",
+        "manifest": PROJECT_ROOT / "data/manifest_v0.1.json",
+        "collector_manifest": PROJECT_ROOT / "data/collector_manifest_v0.1.json",
+        "output": PROJECT_ROOT / "results/frozen_v0.1/results.json",
+    }
+    for name, canonical in expected.items():
+        supplied = Path(getattr(args, name))
+        if not supplied.is_absolute():
+            supplied = Path.cwd() / supplied
+        if supplied.resolve() != canonical.resolve():
+            raise SystemExit(f"formal scoring requires canonical {name.replace('_', '-')} path")
+
+
+def _run_git_guard(*targets: str) -> None:
+    try:
+        subprocess.run(
+            ["make", *targets],
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SystemExit("formal scoring Git/evidence guard failed") from error
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +68,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if not args.validate_only:
+        _require_canonical_paths(args)
+        if args.verify is None:
+            _run_git_guard("assert-score-ready", "verify-collector-comparison")
+            if args.output.exists():
+                raise SystemExit("refusing to overwrite an existing formal result")
+        else:
+            expected_verify = PROJECT_ROOT / "results/frozen_v0.1/results.json"
+            supplied_verify = args.verify if args.verify.is_absolute() else Path.cwd() / args.verify
+            if supplied_verify.resolve() != expected_verify.resolve():
+                raise SystemExit("formal verification requires the canonical committed result")
+            _run_git_guard("assert-frozen-evidence", "verify-collector-comparison")
     rows = read_evidence(args.data)
     protocol = load_json(args.protocol)
     manifest = load_json(args.manifest)

@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import urllib.request
@@ -54,6 +55,17 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _chain_source_hash(log_sha256: str, block_sha256: str) -> str:
     domain = b"event-factor-bench-chain-source-v1\x00"
     return _sha256(domain + bytes.fromhex(log_sha256) + bytes.fromhex(block_sha256))
+
+
+def _rpc_request_sha256(request_id: int, method: str, params: list[Any]) -> str:
+    payload = json.dumps(
+        {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
+    return _sha256(payload)
 
 
 def _protocol() -> dict[str, Any]:
@@ -231,15 +243,32 @@ def _snapshot(tmp_path: Path, *, collector_workers: int = 24) -> dict[str, Path]
     public_collector_path.write_bytes(collector_path.read_bytes())
     frozen_path = data_dir / "frozen_v0.1.csv.gz"
     frozen_sha, _ = _gzip(frozen_path, b"event_id,label\n1,1\n")
+    comparison_path = data_dir / "collector_comparison_v0.1.1.json"
+    comparison_path.write_bytes(b'{"gate_passed":true}\n')
 
+    log_method = "eth_getLogs"
+    log_params: list[Any] = [
+        {
+            "address": "0x0000000000000000000000000000000000000001",
+            "fromBlock": "0x1",
+            "toBlock": "0x2",
+            "topics": ["0x" + "1" * 64, ["0x" + "2" * 64]],
+        }
+    ]
     log_path = data_dir / "raw_chain_v0.1" / "000001_eth_getLogs.json.gz"
-    log_gzip_sha, log_content_sha = _gzip(log_path, b'{"jsonrpc":"2.0","result":[]}')
+    log_gzip_sha, log_content_sha = _gzip(
+        log_path,
+        b'{"jsonrpc":"2.0","id":1,"result":[]}',
+    )
+    block_method = "eth_getBlockByNumber"
+    block_params: list[Any] = ["0x1", False]
     block_path = data_dir / "raw_chain_v0.1" / "000002_eth_getBlockByNumber.json.gz"
     block_gzip_sha, block_content_sha = _gzip(
         block_path,
-        b'{"jsonrpc":"2.0","result":{"number":"0x1"}}',
+        b'{"jsonrpc":"2.0","id":2,"result":{"number":"0x1"}}',
     )
     chain = {
+        "schema_version": "event-factor-bench-chain-freeze-v2",
         "run_source_commit": "a" * 40,
         "collector_manifest": {
             "sha256": _sha256(collector_path.read_bytes()),
@@ -248,17 +277,26 @@ def _snapshot(tmp_path: Path, *, collector_workers: int = 24) -> dict[str, Path]
         "candidate_manifest": {"file_sha256": candidate_sha},
         "files": {
             "collector_manifest_v0.1.json": {"sha256": _sha256(public_collector_path.read_bytes())},
+            "collector_comparison_v0.1.1.json": {"sha256": _sha256(comparison_path.read_bytes())},
             "frozen_v0.1.csv.gz": {"sha256": frozen_sha},
         },
         "raw_responses": [
             {
-                "method": "eth_getLogs",
+                "sequence": 1,
+                "request_id": 1,
+                "method": log_method,
+                "params": log_params,
+                "request_sha256": _rpc_request_sha256(1, log_method, log_params),
                 "gzip_path": "raw_chain_v0.1/000001_eth_getLogs.json.gz",
                 "gzip_sha256": log_gzip_sha,
                 "response_sha256": log_content_sha,
             },
             {
-                "method": "eth_getBlockByNumber",
+                "sequence": 2,
+                "request_id": 2,
+                "method": block_method,
+                "params": block_params,
+                "request_sha256": _rpc_request_sha256(2, block_method, block_params),
                 "gzip_path": "raw_chain_v0.1/000002_eth_getBlockByNumber.json.gz",
                 "gzip_sha256": block_gzip_sha,
                 "response_sha256": block_content_sha,
@@ -458,7 +496,11 @@ def _guard_repo(tmp_path: Path) -> Path:
     _git(repo, "config", "user.name", "Frozen Guard Test")
     _git(repo, "add", ".")
     _git(repo, "commit", "--quiet", "-m", "protocol source")
-    _git(repo, "tag", "protocol-v0.1")
+    _git(repo, "tag", "-a", "protocol-v0.1.1", "-m", "frozen protocol")
+    origin = tmp_path / "guard-origin.git"
+    subprocess.run(["git", "init", "--bare", "--quiet", str(origin)], check=True)
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "--quiet", "origin", "HEAD:refs/heads/main", "--tags")
     return repo
 
 
@@ -482,10 +524,31 @@ def _run_evidence_guard(repo: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _run_protocol_guard(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["make", "assert-protocol-code"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_score_guard(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["make", "assert-score-ready"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _commit_frozen_evidence(repo: Path) -> None:
     payloads = {
         "data/frozen_v0.1.csv.gz": b"frozen evidence\n",
         "data/collector_manifest_v0.1.json": b'{"collector": "frozen"}\n',
+        "data/collector_comparison_v0.1.1.json": b'{"comparison": "frozen"}\n',
         "data/manifest_v0.1.json": b'{"manifest": "frozen"}\n',
     }
     for relative, payload in payloads.items():
@@ -494,14 +557,21 @@ def _commit_frozen_evidence(repo: Path) -> None:
         path.write_bytes(payload)
     _git(repo, "add", "data")
     _git(repo, "commit", "--quiet", "-m", "frozen evidence")
-    _git(repo, "tag", "frozen-v0.1-run")
+    _git(repo, "tag", "-a", "frozen-v0.1.1-run", "-m", "frozen evidence")
 
 
 def _commit_result(repo: Path) -> None:
-    result = repo / "results" / "frozen_v0.1" / "results.json"
-    result.parent.mkdir(parents=True, exist_ok=True)
-    result.write_text('{"result": "computed"}\n', encoding="utf-8")
-    _git(repo, "add", "results")
+    payloads = {
+        "results/frozen_v0.1/results.json": '{"result": "computed"}\n',
+        "results/frozen_v0.1/holdout_metrics.csv": "metric,value\nfixture,1\n",
+        "results/frozen_v0.1/holdout_brier.svg": "<svg/>\n",
+        "RESULTS.md": "# Frozen result\n",
+    }
+    for relative, payload in payloads.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+    _git(repo, "add", "results", "RESULTS.md")
     _git(repo, "commit", "--quiet", "-m", "publish result")
 
 
@@ -510,6 +580,7 @@ def test_makefile_guard_allows_frozen_data_outputs_and_ignored_artifacts(tmp_pat
     for relative in (
         "data/frozen_v0.1.csv.gz",
         "data/collector_manifest_v0.1.json",
+        "data/collector_comparison_v0.1.1.json",
         "data/manifest_v0.1.json",
         "data/raw_chain_v0.1/rpc.json.gz",
         "artifacts/collection-v0.1/manifest.json",
@@ -534,7 +605,7 @@ def test_makefile_guard_rejects_source_changes(tmp_path: Path, mutation: str) ->
     result = _run_source_guard(repo)
 
     assert result.returncode != 0
-    assert "source checkout differs from protocol-v0.1" in result.stderr
+    assert "source checkout differs from protocol-v0.1.1" in result.stderr
 
 
 def test_makefile_guard_rejects_head_after_protocol_tag(tmp_path: Path) -> None:
@@ -544,7 +615,18 @@ def test_makefile_guard_rejects_head_after_protocol_tag(tmp_path: Path) -> None:
     result = _run_source_guard(repo)
 
     assert result.returncode != 0
-    assert "checkout must be the protocol-v0.1 commit" in result.stderr
+    assert "checkout must be the protocol-v0.1.1 commit" in result.stderr
+
+
+def test_protocol_guard_rejects_untracked_code_in_protected_paths(tmp_path: Path) -> None:
+    repo = _guard_repo(tmp_path)
+    (repo / "src" / "sitecustomize.py").parent.mkdir(parents=True)
+    (repo / "src" / "sitecustomize.py").write_text("raise SystemExit\n", encoding="utf-8")
+
+    result = _run_protocol_guard(repo)
+
+    assert result.returncode != 0
+    assert "uncommitted or untracked" in result.stderr
 
 
 def test_frozen_evidence_guard_accepts_a_byte_identical_result_successor(tmp_path: Path) -> None:
@@ -564,7 +646,7 @@ def test_frozen_evidence_guard_requires_the_public_evidence_tag(tmp_path: Path) 
     result = _run_evidence_guard(repo)
 
     assert result.returncode != 0
-    assert "frozen-v0.1-run tag is required" in result.stderr
+    assert "frozen-v0.1.1-run must be an annotated tag" in result.stderr
 
 
 def test_frozen_evidence_guard_rejects_the_evidence_commit_itself(tmp_path: Path) -> None:
@@ -574,15 +656,15 @@ def test_frozen_evidence_guard_rejects_the_evidence_commit_itself(tmp_path: Path
     result = _run_evidence_guard(repo)
 
     assert result.returncode != 0
-    assert "requires a commit after frozen-v0.1-run" in result.stderr
+    assert "requires a commit after frozen-v0.1.1-run" in result.stderr
 
 
 def test_frozen_evidence_guard_requires_protocol_to_precede_evidence(tmp_path: Path) -> None:
     repo = _guard_repo(tmp_path)
-    protocol_commit = _git(repo, "rev-parse", "protocol-v0.1^{commit}").stdout.strip()
+    protocol_commit = _git(repo, "rev-parse", "protocol-v0.1.1^{commit}").stdout.strip()
     _commit_frozen_evidence(repo)
-    evidence_commit = _git(repo, "rev-parse", "frozen-v0.1-run^{commit}").stdout.strip()
-    _git(repo, "tag", "-d", "protocol-v0.1")
+    evidence_commit = _git(repo, "rev-parse", "frozen-v0.1.1-run^{commit}").stdout.strip()
+    _git(repo, "tag", "-d", "protocol-v0.1.1")
     unrelated_protocol = _git(
         repo,
         "commit-tree",
@@ -590,19 +672,27 @@ def test_frozen_evidence_guard_requires_protocol_to_precede_evidence(tmp_path: P
         "-m",
         "unrelated protocol root",
     ).stdout.strip()
-    _git(repo, "tag", "protocol-v0.1", unrelated_protocol)
+    _git(
+        repo,
+        "tag",
+        "-a",
+        "protocol-v0.1.1",
+        "-m",
+        "unrelated protocol",
+        unrelated_protocol,
+    )
     _git(repo, "switch", "--detach", evidence_commit)
     _commit_result(repo)
 
     result = _run_evidence_guard(repo)
 
     assert result.returncode != 0
-    assert "protocol-v0.1 must be an ancestor" in result.stderr
+    assert "protocol-v0.1.1 must be an ancestor" in result.stderr
 
 
 def test_frozen_evidence_guard_requires_evidence_to_precede_result(tmp_path: Path) -> None:
     repo = _guard_repo(tmp_path)
-    protocol_commit = _git(repo, "rev-parse", "protocol-v0.1^{commit}").stdout.strip()
+    protocol_commit = _git(repo, "rev-parse", "protocol-v0.1.1^{commit}").stdout.strip()
     _commit_frozen_evidence(repo)
     _git(repo, "switch", "--detach", protocol_commit)
     _commit_result(repo)
@@ -610,7 +700,7 @@ def test_frozen_evidence_guard_requires_evidence_to_precede_result(tmp_path: Pat
     result = _run_evidence_guard(repo)
 
     assert result.returncode != 0
-    assert "frozen-v0.1-run must be an ancestor" in result.stderr
+    assert "frozen-v0.1.1-run must be an ancestor" in result.stderr
 
 
 def test_frozen_evidence_guard_rejects_rehashed_data_in_result_commit(tmp_path: Path) -> None:
@@ -619,6 +709,7 @@ def test_frozen_evidence_guard_rejects_rehashed_data_in_result_commit(tmp_path: 
     for relative in (
         "data/frozen_v0.1.csv.gz",
         "data/collector_manifest_v0.1.json",
+        "data/collector_comparison_v0.1.1.json",
         "data/manifest_v0.1.json",
     ):
         path = repo / relative
@@ -632,7 +723,75 @@ def test_frozen_evidence_guard_rejects_rehashed_data_in_result_commit(tmp_path: 
     result = _run_evidence_guard(repo)
 
     assert result.returncode != 0
-    assert "differs from frozen-v0.1-run" in result.stderr
+    assert "data tree differs from frozen-v0.1.1-run" in result.stderr
+
+
+def test_frozen_evidence_guard_rejects_results_inside_evidence_tag(tmp_path: Path) -> None:
+    repo = _guard_repo(tmp_path)
+    _commit_frozen_evidence(repo)
+    _git(repo, "tag", "-d", "frozen-v0.1.1-run")
+    _commit_result(repo)
+    _git(repo, "tag", "-a", "frozen-v0.1.1-run", "-m", "tainted evidence")
+    _git(repo, "commit", "--allow-empty", "--quiet", "-m", "successor")
+
+    result = _run_evidence_guard(repo)
+
+    assert result.returncode != 0
+    assert "evidence tag must not contain results" in result.stderr
+
+
+def test_frozen_evidence_guard_rejects_uncommitted_or_dirty_results(tmp_path: Path) -> None:
+    repo = _guard_repo(tmp_path)
+    _commit_frozen_evidence(repo)
+    _commit_result(repo)
+    result_path = repo / "results" / "frozen_v0.1" / "results.json"
+    result_path.write_text('{"result": "working-only"}\n', encoding="utf-8")
+
+    result = _run_evidence_guard(repo)
+
+    assert result.returncode != 0
+    assert "differs from the result commit" in result.stderr
+
+
+def _add_published_origin(repo: Path, tmp_path: Path, *, push_tags: bool) -> Path:
+    del tmp_path
+    origin = Path(_git(repo, "remote", "get-url", "origin").stdout.strip())
+    _git(repo, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+    if push_tags:
+        _git(repo, "push", "--quiet", "origin", "--tags")
+    return origin
+
+
+def test_score_guard_accepts_exact_published_annotated_evidence_tag(tmp_path: Path) -> None:
+    repo = _guard_repo(tmp_path)
+    _commit_frozen_evidence(repo)
+    _add_published_origin(repo, tmp_path, push_tags=True)
+
+    result = _run_score_guard(repo)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_score_guard_rejects_unpublished_evidence_tag(tmp_path: Path) -> None:
+    repo = _guard_repo(tmp_path)
+    _commit_frozen_evidence(repo)
+    _add_published_origin(repo, tmp_path, push_tags=False)
+
+    result = _run_score_guard(repo)
+
+    assert result.returncode != 0
+    assert "origin must publish" in result.stderr
+
+
+def test_score_guard_requires_exact_evidence_commit(tmp_path: Path) -> None:
+    repo = _guard_repo(tmp_path)
+    _commit_frozen_evidence(repo)
+    _git(repo, "commit", "--allow-empty", "--quiet", "-m", "too late")
+
+    result = _run_score_guard(repo)
+
+    assert result.returncode != 0
+    assert "exactly at frozen-v0.1.1-run" in result.stderr
 
 
 def test_makefile_uses_the_right_pre_and_post_freeze_guards() -> None:
@@ -642,7 +801,56 @@ def test_makefile_uses_the_right_pre_and_post_freeze_guards() -> None:
     assert "freeze-labels: assert-frozen-checkout" in makefile
     assert "audit-local-snapshot: assert-frozen-source" in makefile
     assert "verify-frozen: assert-protocol-code assert-frozen-evidence" in makefile
-    assert "--expected-source-commit \"$$(git rev-parse 'protocol-v0.1^{commit}')\"" in makefile
+    assert "--output artifacts/collection-v0.1.1" in makefile
+    assert "--input artifacts/collection-v0.1.1/candidate_rows_v0.1.csv.gz" in makefile
+    assert "collector_comparison_v0.1.1.json" in makefile
+    assert "scripts/compare_collectors.py verify-public" in makefile
+    assert "--collection-dir artifacts/collection-v0.1.1" in makefile
+    assert "--expected-source-commit \"$$(git rev-parse 'protocol-v0.1.1^{commit}')\"" in makefile
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, "{}"),
+        (
+            '{"candidate_rows":"upstream changed"}',
+            '{"candidate_rows":"upstream changed"}',
+        ),
+    ],
+)
+def test_makefile_passes_collector_explanations_as_exact_json(
+    tmp_path: Path,
+    configured: str | None,
+    expected: str,
+) -> None:
+    repo = _guard_repo(tmp_path)
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    capture = tmp_path / "uv-arguments.txt"
+    uv = stub_dir / "uv"
+    uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n', encoding="utf-8")
+    uv.chmod(0o755)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{stub_dir}{os.pathsep}{environment['PATH']}"
+    environment["CAPTURE"] = str(capture)
+    if configured is None:
+        environment.pop("COLLECTOR_COMPARISON_EXPLANATIONS", None)
+    else:
+        environment["COLLECTOR_COMPARISON_EXPLANATIONS"] = configured
+
+    result = subprocess.run(
+        ["make", "compare-collectors"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    arguments = capture.read_text(encoding="utf-8").splitlines()
+    assert arguments[-2:] == ["--explanations", expected]
 
 
 def test_collector_candidate_artifact_tampering_fails_closed(
@@ -777,6 +985,35 @@ def test_empty_chain_raw_response_set_fails_closed(
     _write_json(paths["chain"], chain)
 
     with pytest.raises(ValueError, match="non-empty raw-response records"):
+        _run_main(paths, monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["request_id", "params", "request_sha256", "duplicate_sequence", "method"],
+)
+def test_chain_rpc_request_provenance_tampering_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    paths = _snapshot(tmp_path)
+    chain = _load_json(paths["chain"])
+    if mutation == "request_id":
+        chain["raw_responses"][0]["request_id"] = 7
+    elif mutation == "params":
+        chain["raw_responses"][0]["params"][0]["toBlock"] = "0x3"
+    elif mutation == "request_sha256":
+        chain["raw_responses"][0]["request_sha256"] = "f" * 64
+    elif mutation == "duplicate_sequence":
+        chain["raw_responses"][1]["sequence"] = 1
+    else:
+        raw = chain["raw_responses"][0]
+        raw["method"] = "eth_fakeMethod"
+        raw["request_sha256"] = _rpc_request_sha256(raw["request_id"], raw["method"], raw["params"])
+    _write_json(paths["chain"], chain)
+
+    with pytest.raises(ValueError):
         _run_main(paths, monkeypatch)
 
 

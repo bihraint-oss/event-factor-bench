@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
+import socket
+import ssl
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -168,7 +171,7 @@ def write_inputs(
     *,
     coverage: dict[str, dict[str, dict[str, int | float]]] | None = None,
     grace_seconds: int = 7200,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path]:
     protocol = {
         "retrieval": {
             "gamma_endpoint": "https://gamma.invalid/events/keyset",
@@ -278,7 +281,48 @@ def write_inputs(
     }
     collector_path = tmp_path / "collector_manifest.json"
     collector_path.write_text(json.dumps(collector_manifest))
-    return protocol_path, candidate_path, collector_path
+    old_snapshot = {
+        "run_source_commit": "b" * 40,
+        "collector_manifest_sha256": "3" * 64,
+        "candidate_rows_gzip_sha256": "4" * 64,
+        "candidate_rows_content_sha256": "5" * 64,
+        "selection_audit_sha256": "6" * 64,
+        "candidate_rows": len(rows),
+        "archived_api_responses": 1,
+    }
+    failure_audit = {"failed_source_freeze": {"source_commit": "b" * 40, **old_snapshot}}
+    failure_audit_path = tmp_path / "formal_freeze_failures_v0.1.json"
+    failure_audit_bytes = chain._canonical_json_bytes(failure_audit) + b"\n"
+    failure_audit_path.write_bytes(failure_audit_bytes)
+    report = {
+        "schema_version": "event-factor-bench-collector-comparison-v1",
+        "failure_audit": {"sha256": hashlib.sha256(failure_audit_bytes).hexdigest()},
+        "old": old_snapshot,
+        "new": {
+            "collector_manifest_sha256": hashlib.sha256(collector_path.read_bytes()).hexdigest(),
+            "run_source_commit": "a" * 40,
+            "protocol_sha256": hashlib.sha256(protocol_bytes).hexdigest(),
+            "candidate_rows_gzip_sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+            "candidate_rows_content_sha256": hashlib.sha256(
+                gzip.decompress(candidate_bytes)
+            ).hexdigest(),
+            "candidate_rows": len(rows),
+            "candidate_event_ids_any_horizon": len({row["event_id"] for row in rows}),
+            "candidate_event_horizon_curves": len(
+                {(row["event_id"], row["horizon_seconds"]) for row in rows}
+            ),
+            "coverage_pre_chain": coverage,
+        },
+        "substantive_comparisons": [{"changed": False, "explanation": None}],
+        "missing_explanations": [],
+        "gate_passed": True,
+    }
+    report["report_payload_sha256"] = hashlib.sha256(
+        chain._canonical_json_bytes(report)
+    ).hexdigest()
+    comparison_path = tmp_path / "collector_comparison_v0.1.1.json"
+    comparison_path.write_bytes(chain._canonical_json_bytes(report) + b"\n")
+    return protocol_path, candidate_path, collector_path, comparison_path, failure_audit_path
 
 
 def run_verify(
@@ -290,7 +334,9 @@ def run_verify(
     timestamps: list[int] | None = None,
     fail_method: str | None = None,
 ) -> tuple[dict[str, Any], Path, FakeTransport]:
-    protocol, candidates, collector = write_inputs(tmp_path, rows, coverage=coverage)
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
+        tmp_path, rows, coverage=coverage
+    )
     transport = FakeTransport(logs, timestamps=timestamps, fail_method=fail_method)
     rpc = chain.JsonRpcClient("https://rpc.invalid/v2/secret", transport=transport)
     data_dir = tmp_path / "data"
@@ -298,6 +344,8 @@ def run_verify(
         protocol_path=protocol,
         candidate_path=candidates,
         collector_manifest_path=collector,
+        collector_comparison_path=comparison,
+        failure_audit_path=failure_audit,
         data_dir=data_dir,
         rpc=rpc,
         max_blocks_per_query=2,
@@ -517,7 +565,7 @@ def test_resolution_deadline_accepts_equality_and_rejects_later_block(tmp_path: 
 
 def test_rpc_error_fails_closed_without_publishing(tmp_path: Path) -> None:
     c1 = condition(41)
-    protocol, candidates, collector = write_inputs(
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
         tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
     )
     transport = FakeTransport([], fail_method="eth_getLogs")
@@ -529,6 +577,8 @@ def test_rpc_error_fails_closed_without_publishing(tmp_path: Path) -> None:
             protocol_path=protocol,
             candidate_path=candidates,
             collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
             data_dir=data_dir,
             rpc=rpc,
             max_blocks_per_query=2,
@@ -542,7 +592,7 @@ def test_rpc_error_fails_closed_without_publishing(tmp_path: Path) -> None:
 
 def test_collector_hash_mismatch_fails_before_rpc(tmp_path: Path) -> None:
     c1 = condition(51)
-    protocol, candidates, collector = write_inputs(
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
         tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
     )
     collector_payload = json.loads(collector.read_text())
@@ -556,6 +606,37 @@ def test_collector_hash_mismatch_fails_before_rpc(tmp_path: Path) -> None:
             protocol_path=protocol,
             candidate_path=candidates,
             collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
+            data_dir=tmp_path / "data",
+            rpc=rpc,
+            run_source_commit="a" * 40,
+        )
+    assert transport.calls == []
+
+
+def test_collector_comparison_event_count_forgery_fails_before_rpc(tmp_path: Path) -> None:
+    c1 = condition(510)
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
+        tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
+    )
+    report = json.loads(comparison.read_text())
+    report["new"]["candidate_event_ids_any_horizon"] = 999
+    report.pop("report_payload_sha256")
+    report["report_payload_sha256"] = hashlib.sha256(
+        chain._canonical_json_bytes(report)
+    ).hexdigest()
+    comparison.write_bytes(chain._canonical_json_bytes(report) + b"\n")
+    transport = FakeTransport([])
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+
+    with pytest.raises(chain.CandidateManifestError, match="candidate_event_ids_any_horizon"):
+        chain.verify_and_freeze(
+            protocol_path=protocol,
+            candidate_path=candidates,
+            collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
             data_dir=tmp_path / "data",
             rpc=rpc,
             run_source_commit="a" * 40,
@@ -582,7 +663,7 @@ def test_collector_provenance_tampering_fails_before_rpc(
     row = candidate_row(event_id="one", condition_id=c1, label=1)
     if mutation == "history_hash":
         row["source_history_sha256"] = "e" * 64
-    protocol, candidates, collector = write_inputs(tmp_path, [row])
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(tmp_path, [row])
     payload = json.loads(collector.read_text())
     gamma = payload["raw_responses"][0]
     clob = payload["raw_responses"][1]
@@ -614,6 +695,8 @@ def test_collector_provenance_tampering_fails_before_rpc(
             protocol_path=protocol,
             candidate_path=candidates,
             collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
             data_dir=tmp_path / "data",
             rpc=rpc,
             run_source_commit="a" * 40,
@@ -623,7 +706,7 @@ def test_collector_provenance_tampering_fails_before_rpc(
 
 def test_wrong_chain_and_head_before_candidate_fail_closed(tmp_path: Path) -> None:
     c1 = condition(61)
-    protocol, candidates, collector = write_inputs(
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
         tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
     )
     wrong_rpc = chain.JsonRpcClient("https://rpc.invalid", transport=FakeTransport([], chain_id=1))
@@ -632,6 +715,8 @@ def test_wrong_chain_and_head_before_candidate_fail_closed(tmp_path: Path) -> No
             protocol_path=protocol,
             candidate_path=candidates,
             collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
             data_dir=tmp_path / "wrong-chain",
             rpc=wrong_rpc,
             run_source_commit="a" * 40,
@@ -644,6 +729,8 @@ def test_wrong_chain_and_head_before_candidate_fail_closed(tmp_path: Path) -> No
             protocol_path=protocol,
             candidate_path=candidates,
             collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
             data_dir=tmp_path / "old-head",
             rpc=old_rpc,
             run_source_commit="a" * 40,
@@ -652,7 +739,7 @@ def test_wrong_chain_and_head_before_candidate_fail_closed(tmp_path: Path) -> No
 
 def test_protocol_grace_override_must_match_frozen_value(tmp_path: Path) -> None:
     c1 = condition(71)
-    protocol, candidates, collector = write_inputs(
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
         tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
     )
     rpc = chain.JsonRpcClient("https://rpc.invalid", transport=FakeTransport([]))
@@ -662,6 +749,8 @@ def test_protocol_grace_override_must_match_frozen_value(tmp_path: Path) -> None
             protocol_path=protocol,
             candidate_path=candidates,
             collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
             data_dir=tmp_path / "data",
             rpc=rpc,
             resolution_grace=timedelta(hours=24),
@@ -671,7 +760,7 @@ def test_protocol_grace_override_must_match_frozen_value(tmp_path: Path) -> None
 
 def test_source_commit_is_full_and_required_before_rpc(tmp_path: Path) -> None:
     c1 = condition(81)
-    protocol, candidates, collector = write_inputs(
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
         tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
     )
     transport = FakeTransport([])
@@ -683,11 +772,73 @@ def test_source_commit_is_full_and_required_before_rpc(tmp_path: Path) -> None:
                 protocol_path=protocol,
                 candidate_path=candidates,
                 collector_manifest_path=collector,
+                collector_comparison_path=comparison,
+                failure_audit_path=failure_audit,
                 data_dir=tmp_path / "data",
                 rpc=rpc,
                 run_source_commit=invalid,
             )
     assert transport.calls == []
+
+
+def test_formal_freeze_rejects_rpc_client_with_preexisting_evidence(tmp_path: Path) -> None:
+    c1 = condition(82)
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
+        tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
+    )
+    transport = FakeTransport([])
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+    assert rpc.call("eth_chainId", []).value == hex(chain.POLYGON_CHAIN_ID)
+    assert rpc.is_fresh is False
+
+    with pytest.raises(chain.CandidateManifestError, match="fresh JSON-RPC client"):
+        chain.verify_and_freeze(
+            protocol_path=protocol,
+            candidate_path=candidates,
+            collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
+            data_dir=tmp_path / "data",
+            rpc=rpc,
+            run_source_commit="a" * 40,
+        )
+    assert len(transport.calls) == 1
+    assert not (tmp_path / "data").exists()
+
+
+def test_formal_freeze_rejects_rpc_client_with_consumed_unarchived_request_id(
+    tmp_path: Path,
+) -> None:
+    c1 = condition(83)
+    protocol, candidates, collector, comparison, failure_audit = write_inputs(
+        tmp_path, [candidate_row(event_id="one", condition_id=c1, label=1)]
+    )
+    attempts = 0
+
+    def transport(_url: str, _body: bytes, _timeout: float) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        raise ConnectionResetError("request failed before response bytes arrived")
+
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+    with pytest.raises(chain.RpcError, match="transport failed"):
+        rpc.call("eth_chainId", [])
+    assert rpc.evidence == []
+    assert rpc.is_fresh is False
+
+    with pytest.raises(chain.CandidateManifestError, match="fresh JSON-RPC client"):
+        chain.verify_and_freeze(
+            protocol_path=protocol,
+            candidate_path=candidates,
+            collector_manifest_path=collector,
+            collector_comparison_path=comparison,
+            failure_audit_path=failure_audit,
+            data_dir=tmp_path / "data",
+            rpc=rpc,
+            run_source_commit="a" * 40,
+        )
+    assert attempts == 1
+    assert not (tmp_path / "data").exists()
 
 
 def test_condition_topic_or_filter_is_bounded(tmp_path: Path) -> None:
@@ -705,43 +856,331 @@ def test_condition_topic_or_filter_is_bounded(tmp_path: Path) -> None:
     assert all(len(batch) <= chain.MAX_CONDITIONS_PER_LOG_QUERY for batch in batches)
 
 
-def test_http_transport_retries_rate_limits_with_fixed_backoff(
+class _HttpResponse:
+    def __init__(
+        self,
+        payload: bytes,
+        *,
+        status: int = 200,
+        read_failure: str | None = None,
+    ) -> None:
+        self.payload = payload
+        self.status = status
+        self.read_failure = read_failure
+
+    def __enter__(self) -> _HttpResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        if self.read_failure == "incomplete_read":
+            raise http.client.IncompleteRead(b'{"jsonrpc":', 64)
+        return self.payload
+
+
+def _transient_transport_error(kind: str) -> BaseException:
+    if kind == "remote_disconnected":
+        return http.client.RemoteDisconnected("peer closed without a response")
+    if kind == "ssl_eof_direct":
+        return ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+    if kind == "ssl_eof_wrapped":
+        return chain.urllib.error.URLError(
+            ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+        )
+    if kind.startswith("eai_again"):
+        error = socket.gaierror(socket.EAI_AGAIN, "temporary name resolution failure")
+        return chain.urllib.error.URLError(error) if kind.endswith("wrapped") else error
+    raise AssertionError(f"unknown transient failure kind: {kind}")
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "remote_disconnected",
+        "ssl_eof_direct",
+        "ssl_eof_wrapped",
+        "incomplete_read",
+        "eai_again_direct",
+        "eai_again_wrapped",
+    ],
+)
+def test_http_transport_recovers_from_whitelisted_connection_failures(
     monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    payload = b'{"jsonrpc":"2.0","id":1,"result":"0x89"}'
+
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if attempts < 3:
+            if failure_kind == "incomplete_read":
+                return _HttpResponse(payload, read_failure=failure_kind)
+            raise _transient_transport_error(failure_kind)
+        return _HttpResponse(payload)
+
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+
+    assert chain._http_transport("https://rpc.invalid", b"{}", 3.0) == payload
+    assert attempts == 3
+    assert delays == list(chain.RPC_HTTP_BACKOFF_SECONDS[:2])
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "remote_disconnected",
+        "ssl_eof_direct",
+        "ssl_eof_wrapped",
+        "incomplete_read",
+        "eai_again_direct",
+        "eai_again_wrapped",
+    ],
+)
+def test_http_transport_exhausts_whitelisted_connection_failures_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    payload = b'{"jsonrpc":"2.0","id":1,"result":"0x89"}'
+
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if failure_kind == "incomplete_read":
+            return _HttpResponse(payload, read_failure=failure_kind)
+        raise _transient_transport_error(failure_kind)
+
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+
+    with pytest.raises(chain.RpcError, match="network error"):
+        chain._http_transport("https://rpc.invalid", b"{}", 3.0)
+    assert attempts == chain.RPC_HTTP_MAX_ATTEMPTS
+    assert delays == list(chain.RPC_HTTP_BACKOFF_SECONDS)
+
+
+def _permanent_transport_error(kind: str) -> BaseException:
+    if kind.startswith("certificate"):
+        error: BaseException = ssl.SSLCertVerificationError(1, "certificate verify failed")
+    elif kind.startswith("eai_noname"):
+        error = socket.gaierror(socket.EAI_NONAME, "name or service not known")
+    else:
+        raise AssertionError(f"unknown permanent failure kind: {kind}")
+    if kind.endswith("wrapped"):
+        return chain.urllib.error.URLError(error)
+    return error
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    ["certificate_direct", "certificate_wrapped", "eai_noname_direct", "eai_noname_wrapped"],
+)
+def test_http_transport_does_not_retry_permanent_tls_or_dns_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
 ) -> None:
     attempts = 0
     delays: list[float] = []
 
-    class Response:
-        status = 200
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        raise _permanent_transport_error(failure_kind)
 
-        def __enter__(self) -> Response:
-            return self
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
 
-        def __exit__(self, *_args: object) -> None:
-            return None
+    with pytest.raises(chain.RpcError):
+        chain._http_transport("https://rpc.invalid", b"{}", 3.0)
+    assert attempts == 1
+    assert delays == []
 
-        @staticmethod
-        def read() -> bytes:
-            return b'{"jsonrpc":"2.0","id":1,"result":"0x89"}'
 
-    def urlopen(_request: object, *, timeout: float) -> Response:
+def test_http_transport_retries_rate_limits_with_fixed_http_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    payload = b'{"jsonrpc":"2.0","id":1,"result":"0x89"}'
+
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
         nonlocal attempts
         assert timeout == 3.0
         attempts += 1
         if attempts < 3:
             raise chain.urllib.error.HTTPError("https://rpc.invalid", 429, "rate limited", {}, None)
-        return Response()
+        return _HttpResponse(payload)
 
     monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(chain.time_module, "sleep", delays.append)
-    payload = chain._http_transport("https://rpc.invalid", b"{}", 3.0)
-    assert json.loads(payload)["result"] == "0x89"
+
+    assert chain._http_transport("https://rpc.invalid", b"{}", 3.0) == payload
     assert attempts == 3
-    assert delays == list(chain.RPC_BACKOFF_SECONDS[:2])
+    assert delays == list(chain.RPC_HTTP_BACKOFF_SECONDS[:2])
 
 
-def test_json_rpc_client_retries_only_whitelisted_transient_errors(
+@pytest.mark.parametrize("status", [429, 503])
+def test_http_transport_retries_direct_returned_retryable_statuses(
     monkeypatch: pytest.MonkeyPatch,
+    status: int,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    payload = b'{"jsonrpc":"2.0","id":1,"result":"0x89"}'
+
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        return _HttpResponse(payload) if attempts == 3 else _HttpResponse(payload, status=status)
+
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+
+    assert chain._http_transport("https://rpc.invalid", b"{}", 3.0) == payload
+    assert attempts == 3
+    assert delays == list(chain.RPC_HTTP_BACKOFF_SECONDS[:2])
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_http_transport_exhausts_direct_returned_retryable_statuses_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        return _HttpResponse(b"unused", status=status)
+
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+
+    with pytest.raises(chain.RpcError, match=rf"HTTP status {status}.*10 attempts"):
+        chain._http_transport("https://rpc.invalid", b"{}", 3.0)
+    assert attempts == chain.RPC_HTTP_MAX_ATTEMPTS
+    assert delays == list(chain.RPC_HTTP_BACKOFF_SECONDS)
+
+
+@pytest.mark.parametrize("status", [401, 418])
+def test_http_transport_rejects_direct_returned_nonretryable_statuses_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def urlopen(_request: object, *, timeout: float) -> _HttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        return _HttpResponse(b"unused", status=status)
+
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+
+    with pytest.raises(chain.RpcError, match=rf"HTTP status {status}.*not retryable"):
+        chain._http_transport("https://rpc.invalid", b"{}", 3.0)
+    assert attempts == 1
+    assert delays == []
+
+
+def test_http_and_json_rpc_retry_budgets_are_separate_and_exact() -> None:
+    assert chain.RPC_HTTP_MAX_ATTEMPTS == 10
+    assert chain.RPC_HTTP_BACKOFF_SECONDS == (1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 60.0, 60.0)
+    assert chain.RPC_JSON_MAX_ATTEMPTS == 5
+    assert chain.RPC_JSON_BACKOFF_SECONDS == (0.25, 0.5, 1.0, 2.0)
+    assert len(chain.RPC_HTTP_BACKOFF_SECONDS) == chain.RPC_HTTP_MAX_ATTEMPTS - 1
+    assert len(chain.RPC_JSON_BACKOFF_SECONDS) == chain.RPC_JSON_MAX_ATTEMPTS - 1
+
+
+def test_json_rpc_client_exhausts_only_the_json_envelope_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_bodies: list[bytes] = []
+    response_bodies: list[bytes] = []
+    delays: list[float] = []
+
+    def transport(_url: str, body: bytes, _timeout: float) -> bytes:
+        request_bodies.append(body)
+        request = json.loads(body)
+        response = FakeTransport._response(
+            request, error={"code": -32005, "message": "query limit"}
+        )
+        response_bodies.append(response)
+        return response
+
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+
+    with pytest.raises(chain.RpcError, match="RPC error"):
+        rpc.call("eth_getLogs", [{"fromBlock": "0x1"}])
+    assert len(request_bodies) == chain.RPC_JSON_MAX_ATTEMPTS
+    assert delays == list(chain.RPC_JSON_BACKOFF_SECONDS)
+    assert [json.loads(body)["id"] for body in request_bodies] == list(
+        range(1, chain.RPC_JSON_MAX_ATTEMPTS + 1)
+    )
+    assert [item.request_id for item in rpc.evidence] == list(
+        range(1, chain.RPC_JSON_MAX_ATTEMPTS + 1)
+    )
+    assert [item.sequence for item in rpc.evidence] == list(
+        range(1, chain.RPC_JSON_MAX_ATTEMPTS + 1)
+    )
+    assert [item.request_sha256 for item in rpc.evidence] == [
+        hashlib.sha256(body).hexdigest() for body in request_bodies
+    ]
+    assert [item.response_sha256 for item in rpc.evidence] == [
+        hashlib.sha256(body).hexdigest() for body in response_bodies
+    ]
+
+
+def test_http_retries_reuse_one_request_id_and_archive_only_the_received_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_bodies: list[bytes] = []
+    delays: list[float] = []
+
+    def urlopen(request: object, *, timeout: float) -> _HttpResponse:
+        assert timeout == 3.0
+        body = request.data  # type: ignore[attr-defined]
+        assert isinstance(body, bytes)
+        request_bodies.append(body)
+        if len(request_bodies) < 3:
+            raise http.client.RemoteDisconnected("peer closed without a response")
+        request = json.loads(body)
+        return _HttpResponse(FakeTransport._response(request, result="0x89"))
+
+    monkeypatch.setattr(chain.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+    rpc = chain.JsonRpcClient("https://rpc.invalid", timeout=3.0)
+
+    result = rpc.call("eth_chainId", [])
+    assert result.value == "0x89"
+    assert len(set(request_bodies)) == 1
+    assert [json.loads(body)["id"] for body in request_bodies] == [1, 1, 1]
+    assert delays == list(chain.RPC_HTTP_BACKOFF_SECONDS[:2])
+    assert len(rpc.evidence) == 1
+    assert rpc.evidence[0].request_id == 1
+    assert rpc.evidence[0].request_sha256 == hashlib.sha256(request_bodies[0]).hexdigest()
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_json_rpc_client_rejects_nonfinite_json_constants_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    constant: str,
 ) -> None:
     attempts = 0
     delays: list[float] = []
@@ -749,16 +1188,251 @@ def test_json_rpc_client_retries_only_whitelisted_transient_errors(
     def transport(_url: str, body: bytes, _timeout: float) -> bytes:
         nonlocal attempts
         attempts += 1
-        request = json.loads(body)
-        if attempts < 3:
-            return FakeTransport._response(
-                request, error={"code": -32005, "message": "query limit"}
-            )
-        return FakeTransport._response(request, result="0x89")
+        request_id = json.loads(body)["id"]
+        return f'{{"jsonrpc":"2.0","id":{request_id},"result":{constant}}}'.encode()
 
     monkeypatch.setattr(chain.time_module, "sleep", delays.append)
     rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
-    assert rpc.call("eth_chainId", []).value == "0x89"
-    assert attempts == 3
-    assert len(rpc.evidence) == 3
-    assert delays == list(chain.RPC_BACKOFF_SECONDS[:2])
+
+    with pytest.raises(chain.RpcError, match="malformed JSON"):
+        rpc.call("eth_chainId", [])
+    assert attempts == 1
+    assert delays == []
+    assert len(rpc.evidence) == 1
+    assert rpc.evidence[0].request_id == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "boolean_response_id",
+        "float_response_id",
+        "duplicate_response_id",
+        "boolean_error_code",
+        "float_error_code",
+        "duplicate_error_code",
+    ],
+)
+def test_json_rpc_client_rejects_noncanonical_response_ids_and_error_codes_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def transport(_url: str, body: bytes, _timeout: float) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        request_id = json.loads(body)["id"]
+        if mutation == "boolean_response_id":
+            return b'{"jsonrpc":"2.0","id":true,"result":"0x89"}'
+        if mutation == "float_response_id":
+            return b'{"jsonrpc":"2.0","id":1.0,"result":"0x89"}'
+        if mutation == "duplicate_response_id":
+            return b'{"jsonrpc":"2.0","id":999,"id":1,"result":"0x89"}'
+        if mutation == "boolean_error_code":
+            error = '{"code":true,"message":"invalid boolean code"}'
+        elif mutation == "float_error_code":
+            error = '{"code":429.0,"message":"invalid float code"}'
+        else:
+            error = '{"code":-32001,"code":-32005,"message":"duplicate code"}'
+        return f'{{"jsonrpc":"2.0","id":{request_id},"error":{error}}}'.encode()
+
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+
+    with pytest.raises(chain.RpcError):
+        rpc.call("eth_chainId", [])
+    assert attempts == 1
+    assert delays == []
+    assert len(rpc.evidence) == 1
+
+
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_json_rpc_client_rejects_nonfinite_request_params_before_transport(
+    nonfinite: float,
+) -> None:
+    attempts = 0
+
+    def transport(_url: str, _body: bytes, _timeout: float) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        raise AssertionError("non-finite request parameters must not reach the transport")
+
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        rpc.call("eth_getLogs", [{"threshold": nonfinite}])
+    assert attempts == 0
+    assert rpc.evidence == []
+
+
+def test_rpc_evidence_deep_copies_nested_params_and_binds_request_ids_and_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_bodies: list[bytes] = []
+    response_bodies: list[bytes] = []
+    delays: list[float] = []
+    params = [{"topics": ["0xtopic", ["0xcondition"]], "fromBlock": "0x1"}]
+    expected_params = [{"topics": ["0xtopic", ["0xcondition"]], "fromBlock": "0x1"}]
+
+    def transport(_url: str, body: bytes, _timeout: float) -> bytes:
+        request_bodies.append(body)
+        request = json.loads(body)
+        if len(request_bodies) < 3:
+            response = FakeTransport._response(
+                request, error={"code": 429, "message": "rate limited"}
+            )
+        else:
+            response = FakeTransport._response(request, result=[])
+        response_bodies.append(response)
+        return response
+
+    monkeypatch.setattr(chain.time_module, "sleep", delays.append)
+    rpc = chain.JsonRpcClient("https://rpc.invalid", transport=transport)
+    result = rpc.call("eth_getLogs", params)
+    params[0]["topics"][1].append("0xmutated")
+    params[0]["fromBlock"] = "0x2"
+
+    assert result.value == []
+    assert result.evidence_sha256 == hashlib.sha256(response_bodies[-1]).hexdigest()
+    assert delays == list(chain.RPC_JSON_BACKOFF_SECONDS[:2])
+    assert [json.loads(body)["id"] for body in request_bodies] == [1, 2, 3]
+    assert [item.request_id for item in rpc.evidence] == [1, 2, 3]
+    assert [item.sequence for item in rpc.evidence] == [1, 2, 3]
+    assert all(item.params == expected_params for item in rpc.evidence)
+    assert [item.request_sha256 for item in rpc.evidence] == [
+        hashlib.sha256(body).hexdigest() for body in request_bodies
+    ]
+    assert [item.response_sha256 for item in rpc.evidence] == [
+        hashlib.sha256(body).hexdigest() for body in response_bodies
+    ]
+
+    records, payloads = chain._raw_evidence_manifest(rpc.evidence)
+    assert [record["request_id"] for record in records] == [1, 2, 3]
+    for record, request_body, response_body in zip(
+        records, request_bodies, response_bodies, strict=True
+    ):
+        assert record["request_sha256"] == hashlib.sha256(request_body).hexdigest()
+        assert record["response_sha256"] == hashlib.sha256(response_body).hexdigest()
+        assert gzip.decompress(payloads[record["gzip_path"]]) == response_body
+
+
+def test_manifest_discloses_the_exact_two_layer_retry_policy(tmp_path: Path) -> None:
+    c1 = condition(91)
+    manifest, _, _ = run_verify(
+        tmp_path,
+        [candidate_row(event_id="one", condition_id=c1, label=1)],
+        [resolution_log(c1, (1, 0))],
+    )
+
+    assert manifest["chain"]["rpc_retry_policy"] == {
+        "http_transport": {
+            "max_attempts": 10,
+            "backoff_seconds": [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 60.0, 60.0],
+            "timeout_seconds": 30.0,
+            "retryable_http_statuses": [408, 425, 429, 500, 502, 503, 504],
+            "retryable_exception_classes": [
+                "TimeoutError",
+                "ConnectionError",
+                "http.client.IncompleteRead",
+                "ssl.SSLEOFError",
+                "socket.gaierror(EAI_AGAIN)",
+            ],
+            "certificate_errors_retryable": False,
+            "response_archive_scope": "received_json_rpc_envelopes_only",
+        },
+        "json_rpc_envelope": {
+            "max_attempts": 5,
+            "backoff_seconds": [0.25, 0.5, 1.0, 2.0],
+            "retryable_error_codes": [-32005, 429],
+        },
+    }
+
+
+def _publish_test_payloads(data_dir: Path, *, overwrite: bool) -> None:
+    chain._publish_outputs(
+        data_dir=data_dir,
+        csv_payload=b"new frozen csv",
+        collector_manifest_payload=b"new collector manifest",
+        collector_comparison_payload=b"new collector comparison",
+        manifest_payload=b"new chain manifest",
+        raw_payloads={"raw_chain_v0.1/000001_eth_chainId.json.gz": b"new raw response"},
+        overwrite=overwrite,
+    )
+
+
+def _file_snapshot(root: Path) -> dict[str, bytes]:
+    if not root.exists():
+        return {}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize("failing_replace", range(1, 6))
+def test_publish_outputs_removes_every_new_fragment_when_a_commit_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_replace: int,
+) -> None:
+    data_dir = tmp_path / "data"
+    real_replace = chain.os.replace
+    replacements = 0
+
+    def replace(source: Path, target: Path) -> None:
+        nonlocal replacements
+        replacements += 1
+        if replacements == failing_replace:
+            raise OSError(f"injected replace failure {failing_replace}")
+        real_replace(source, target)
+
+    monkeypatch.setattr(chain.os, "replace", replace)
+
+    with pytest.raises(OSError, match="injected replace failure"):
+        _publish_test_payloads(data_dir, overwrite=False)
+    assert replacements == failing_replace
+    assert _file_snapshot(data_dir) == {}
+    assert list(data_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("failing_replace", range(1, 11))
+def test_publish_outputs_restores_old_evidence_when_overwrite_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_replace: int,
+) -> None:
+    data_dir = tmp_path / "data"
+    raw_dir = data_dir / "raw_chain_v0.1"
+    raw_dir.mkdir(parents=True)
+    (data_dir / "frozen_v0.1.csv.gz").write_bytes(b"old frozen csv")
+    (data_dir / "collector_manifest_v0.1.json").write_bytes(b"old collector manifest")
+    (data_dir / "collector_comparison_v0.1.1.json").write_bytes(b"old collector comparison")
+    (data_dir / "manifest_v0.1.json").write_bytes(b"old chain manifest")
+    (raw_dir / "000001_old.json.gz").write_bytes(b"old raw response")
+    expected = _file_snapshot(data_dir)
+    real_replace = chain.os.replace
+    replacements = 0
+
+    def replace(source: Path, target: Path) -> None:
+        nonlocal replacements
+        replacements += 1
+        if replacements == failing_replace:
+            raise OSError(f"injected replace failure {failing_replace}")
+        real_replace(source, target)
+
+    monkeypatch.setattr(chain.os, "replace", replace)
+
+    with pytest.raises(OSError, match="injected replace failure"):
+        _publish_test_payloads(data_dir, overwrite=True)
+    assert replacements >= failing_replace
+    assert _file_snapshot(data_dir) == expected
+    assert {path.name for path in data_dir.iterdir()} == {
+        "collector_manifest_v0.1.json",
+        "collector_comparison_v0.1.1.json",
+        "frozen_v0.1.csv.gz",
+        "manifest_v0.1.json",
+        "raw_chain_v0.1",
+    }

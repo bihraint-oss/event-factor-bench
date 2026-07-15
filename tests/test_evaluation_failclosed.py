@@ -176,6 +176,11 @@ def test_evaluate_rejects_noncanonical_binding_digests(digest_name: str, expecte
             "decompressed evidence SHA-256",
         ),
         (("files", "frozen_v0.1.csv.gz", "rows"), 95, "row count"),
+        (
+            ("files", "collector_comparison_v0.1.1.json", "new_collector_manifest_sha256"),
+            "f" * 64,
+            "comparison is not bound",
+        ),
         (("run_source_commit",), "9" * 39, "run_source_commit"),
         (("chain", "chain_id"), 1, "Polygon chain 137"),
         (("chain", "conditional_tokens_address"), "0xdead", "address differs"),
@@ -379,7 +384,7 @@ def test_status_vocabulary_and_types_are_frozen() -> None:
         ("wrong_count", "coverage count expected_events"),
         ("boolean_ratio", "must be numeric"),
         ("nonnumeric_ratio", "must be numeric"),
-        ("nonfinite_ratio", "does not match its counts"),
+        ("nonfinite_ratio", "Out of range float values"),
         ("prechain_ratio", "does not match its counts"),
         ("summary_total", "pre-chain candidate rows"),
         ("flat_absent", "flat coverage audit"),
@@ -429,6 +434,12 @@ def test_coverage_audit_tampering_fails_closed(mutation: str, expected: str) -> 
     ("mutation", "expected"),
     [
         ("no_raw", "no raw chain response"),
+        ("request_sequence", "contiguous from one"),
+        ("request_id", "contiguous from one"),
+        ("request_params", "request SHA-256 does not match"),
+        ("request_sha", "request SHA-256 does not match"),
+        ("unknown_method", "unknown JSON-RPC method"),
+        ("reversed_methods", "order log evidence before block evidence"),
         ("no_bundles", "no chain source bundles"),
         ("short_bundle", "must contain log and block"),
         ("absent_raw", "absent raw response"),
@@ -441,6 +452,39 @@ def test_chain_source_bundle_tampering_fails_closed(mutation: str, expected: str
     frozen_manifest = manifest(rows)
     if mutation == "no_raw":
         frozen_manifest["raw_responses"] = []
+    elif mutation == "request_sequence":
+        frozen_manifest["raw_responses"][0]["sequence"] = 2
+    elif mutation == "request_id":
+        frozen_manifest["raw_responses"][0]["request_id"] = 2
+    elif mutation == "request_params":
+        frozen_manifest["raw_responses"][0]["params"][0]["toBlock"] = "0x3"
+    elif mutation == "request_sha":
+        frozen_manifest["raw_responses"][0]["request_sha256"] = "f" * 64
+    elif mutation in {"unknown_method", "reversed_methods"}:
+        records = frozen_manifest["raw_responses"]
+        if mutation == "unknown_method":
+            records[0]["method"] = "eth_fakeMethod"
+        else:
+            records[0]["method"], records[1]["method"] = (
+                records[1]["method"],
+                records[0]["method"],
+            )
+        for record in records:
+            request = {
+                "jsonrpc": "2.0",
+                "id": record["request_id"],
+                "method": record["method"],
+                "params": record["params"],
+            }
+            record["request_sha256"] = hashlib.sha256(
+                json.dumps(
+                    request,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
     elif mutation == "no_bundles":
         frozen_manifest["chain_source_bundles"] = []
     elif mutation == "short_bundle":

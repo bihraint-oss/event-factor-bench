@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
+import socket
+import ssl
 import sys
 import urllib.parse
 from copy import deepcopy
@@ -24,6 +27,15 @@ assert SPEC is not None and SPEC.loader is not None
 collection = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = collection
 SPEC.loader.exec_module(collection)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b'{"id":1,"id":2}', b'{"value":NaN}', b'{"value":Infinity}'],
+)
+def test_collection_rejects_ambiguous_or_nonstandard_json(payload: bytes) -> None:
+    with pytest.raises(collection.CollectionError, match="invalid JSON"):
+        collection._load_json(payload, "fixture")
 
 
 def _protocol(*, minimum: int = 2) -> dict[str, Any]:
@@ -194,13 +206,15 @@ def test_frozen_collection_deduplicates_inclusive_windows_and_audits_sources(
         output_dir,
         run_source_commit="a" * 40,
         transport=transport,
-        user_agent="fixture/1",
     )
 
     assert summary["selected_events"] == 1
     assert summary["candidate_rows"] == 4
     get_calls = [call for call in transport.calls if call[0] == "GET"]
     assert len(get_calls) == 2
+    assert {call[3]["User-Agent"] for call in transport.calls} == {
+        "event-factor-bench/0.1.1 (+frozen-protocol-collector)"
+    }
     queries = [urllib.parse.parse_qs(urllib.parse.urlsplit(call[1]).query) for call in get_calls]
     assert queries[0]["end_date_max"] == ["2026-06-02T00:00:00Z"]
     assert queries[1]["end_date_min"] == ["2026-06-02T00:00:00Z"]
@@ -254,6 +268,24 @@ def test_frozen_collection_deduplicates_inclusive_windows_and_audits_sources(
     manifest = json.loads((output_dir / "manifest.json").read_text())
     assert manifest["schema_version"] == "event-factor-bench-collector-v1"
     assert manifest["run_source_commit"] == "a" * 40
+    assert manifest["collector_user_agent"] == (
+        "event-factor-bench/0.1.1 (+frozen-protocol-collector)"
+    )
+    assert manifest["http_retry_policy"] == {
+        "max_attempts": 10,
+        "backoff_seconds": [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 60.0, 60.0],
+        "timeout_seconds": 60.0,
+        "retryable_http_statuses": [408, 425, 429, 500, 502, 503, 504],
+        "retryable_exception_classes": [
+            "TimeoutError",
+            "ConnectionError",
+            "http.client.IncompleteRead",
+            "ssl.SSLEOFError",
+            "socket.gaierror(EAI_AGAIN)",
+        ],
+        "certificate_errors_retryable": False,
+        "response_archive_scope": "successful_response_bytes_only",
+    }
     assert "not a canonical label" in manifest["label_caveat"]
     assert {item["path"] for item in manifest["artifacts"]} == {
         "protocol_v0.1.json",
@@ -364,3 +396,353 @@ def test_batch_history_uses_at_most_20_tokens_and_omits_interval(tmp_path: Path)
     assert all("interval" not in body for body in bodies)
     assert len(histories) == 21
     assert len(archive.entries) == 2
+
+
+class _CollectionHttpResponse:
+    def __init__(
+        self,
+        payload: bytes,
+        *,
+        status: int = 200,
+        read_failure: str | None = None,
+    ) -> None:
+        self.payload = payload
+        self.status = status
+        self.read_failure = read_failure
+
+    def __enter__(self) -> _CollectionHttpResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        if self.read_failure == "incomplete_read":
+            raise http.client.IncompleteRead(b'{"events":', 64)
+        return self.payload
+
+
+def _collection_transient_error(kind: str) -> BaseException:
+    if kind == "remote_disconnected":
+        return http.client.RemoteDisconnected("peer closed without a response")
+    if kind == "ssl_eof_direct":
+        return ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+    if kind == "ssl_eof_wrapped":
+        return collection.urllib.error.URLError(
+            ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+        )
+    if kind.startswith("eai_again"):
+        error = socket.gaierror(socket.EAI_AGAIN, "temporary name resolution failure")
+        return collection.urllib.error.URLError(error) if kind.endswith("wrapped") else error
+    raise AssertionError(f"unknown transient failure kind: {kind}")
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "remote_disconnected",
+        "ssl_eof_direct",
+        "ssl_eof_wrapped",
+        "incomplete_read",
+        "eai_again_direct",
+        "eai_again_wrapped",
+    ],
+)
+def test_collection_http_transport_recovers_from_whitelisted_network_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    payload = b'{"events":[]}'
+
+    def urlopen(_request: object, *, timeout: float) -> _CollectionHttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if attempts < 3:
+            if failure_kind == "incomplete_read":
+                return _CollectionHttpResponse(payload, read_failure=failure_kind)
+            raise _collection_transient_error(failure_kind)
+        return _CollectionHttpResponse(payload)
+
+    monkeypatch.setattr(collection.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(collection.time, "sleep", delays.append)
+    transport = collection.make_http_transport(timeout=3.0)
+
+    assert (
+        transport("GET", "https://gamma.invalid", None, {"Accept": "application/json"}) == payload
+    )
+    assert attempts == 3
+    assert delays == list(collection.HTTP_BACKOFF_SECONDS[:2])
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "remote_disconnected",
+        "ssl_eof_direct",
+        "ssl_eof_wrapped",
+        "incomplete_read",
+        "eai_again_direct",
+        "eai_again_wrapped",
+    ],
+)
+def test_collection_http_transport_exhausts_whitelisted_network_failures_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def urlopen(_request: object, *, timeout: float) -> _CollectionHttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if failure_kind == "incomplete_read":
+            return _CollectionHttpResponse(b"unused", read_failure=failure_kind)
+        raise _collection_transient_error(failure_kind)
+
+    monkeypatch.setattr(collection.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(collection.time, "sleep", delays.append)
+    transport = collection.make_http_transport(timeout=3.0)
+
+    with pytest.raises(collection.CollectionError, match="after 10 attempts"):
+        transport("GET", "https://gamma.invalid", None, {"Accept": "application/json"})
+    assert attempts == collection.HTTP_MAX_ATTEMPTS
+    assert delays == list(collection.HTTP_BACKOFF_SECONDS)
+
+
+@pytest.mark.parametrize("delivery", ["returned", "raised"])
+@pytest.mark.parametrize("status", [429, 503])
+def test_collection_http_transport_retries_whitelisted_http_statuses(
+    monkeypatch: pytest.MonkeyPatch,
+    delivery: str,
+    status: int,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    payload = b'{"events":[]}'
+
+    def urlopen(_request: object, *, timeout: float) -> _CollectionHttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if attempts == 3:
+            return _CollectionHttpResponse(payload)
+        if delivery == "raised":
+            raise collection.urllib.error.HTTPError(
+                "https://gamma.invalid", status, "retryable", {}, None
+            )
+        return _CollectionHttpResponse(payload, status=status)
+
+    monkeypatch.setattr(collection.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(collection.time, "sleep", delays.append)
+    transport = collection.make_http_transport(timeout=3.0)
+
+    assert transport("GET", "https://gamma.invalid", None, {}) == payload
+    assert attempts == 3
+    assert delays == list(collection.HTTP_BACKOFF_SECONDS[:2])
+
+
+@pytest.mark.parametrize("delivery", ["returned", "raised"])
+@pytest.mark.parametrize("status", [429, 503])
+def test_collection_http_transport_exhausts_whitelisted_http_statuses_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    delivery: str,
+    status: int,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def urlopen(_request: object, *, timeout: float) -> _CollectionHttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if delivery == "raised":
+            raise collection.urllib.error.HTTPError(
+                "https://gamma.invalid", status, "retryable", {}, None
+            )
+        return _CollectionHttpResponse(b"unused", status=status)
+
+    monkeypatch.setattr(collection.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(collection.time, "sleep", delays.append)
+    transport = collection.make_http_transport(timeout=3.0)
+
+    with pytest.raises(collection.CollectionError, match=rf"HTTP status {status}.*10 attempts"):
+        transport("GET", "https://gamma.invalid", None, {})
+    assert attempts == collection.HTTP_MAX_ATTEMPTS
+    assert delays == list(collection.HTTP_BACKOFF_SECONDS)
+
+
+@pytest.mark.parametrize("delivery", ["returned", "raised"])
+@pytest.mark.parametrize("status", [401, 418])
+def test_collection_http_transport_rejects_nonretryable_http_statuses_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+    delivery: str,
+    status: int,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def urlopen(_request: object, *, timeout: float) -> _CollectionHttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        if delivery == "raised":
+            raise collection.urllib.error.HTTPError(
+                "https://gamma.invalid", status, "permanent", {}, None
+            )
+        return _CollectionHttpResponse(b"unused", status=status)
+
+    monkeypatch.setattr(collection.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(collection.time, "sleep", delays.append)
+    transport = collection.make_http_transport(timeout=3.0)
+
+    with pytest.raises(collection.CollectionError, match="not retryable"):
+        transport("GET", "https://gamma.invalid", None, {})
+    assert attempts == 1
+    assert delays == []
+
+
+def _collection_permanent_error(kind: str) -> BaseException:
+    if kind.startswith("certificate"):
+        error: BaseException = ssl.SSLCertVerificationError(1, "certificate verify failed")
+    elif kind.startswith("eai_noname"):
+        error = socket.gaierror(socket.EAI_NONAME, "name or service not known")
+    else:
+        raise AssertionError(f"unknown permanent failure kind: {kind}")
+    return collection.urllib.error.URLError(error) if kind.endswith("wrapped") else error
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    ["certificate_direct", "certificate_wrapped", "eai_noname_direct", "eai_noname_wrapped"],
+)
+def test_collection_http_transport_fails_fast_for_certificate_and_permanent_dns_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def urlopen(_request: object, *, timeout: float) -> _CollectionHttpResponse:
+        nonlocal attempts
+        assert timeout == 3.0
+        attempts += 1
+        raise _collection_permanent_error(failure_kind)
+
+    monkeypatch.setattr(collection.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(collection.time, "sleep", delays.append)
+    transport = collection.make_http_transport(timeout=3.0)
+
+    with pytest.raises(collection.CollectionError, match="non-retryable network error"):
+        transport("GET", "https://gamma.invalid", None, {})
+    assert attempts == 1
+    assert delays == []
+
+
+def test_collection_http_retry_budget_is_exact() -> None:
+    assert collection.HTTP_MAX_ATTEMPTS == 10
+    assert collection.HTTP_BACKOFF_SECONDS == (
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+        16.0,
+        30.0,
+        60.0,
+        60.0,
+        60.0,
+    )
+    assert {408, 425, 429, 500, 502, 503, 504} == collection.RETRYABLE_HTTP_STATUSES
+    assert len(collection.HTTP_BACKOFF_SECONDS) == collection.HTTP_MAX_ATTEMPTS - 1
+
+
+def _write_protocol(path: Path) -> None:
+    path.write_text(json.dumps(_protocol()))
+
+
+def test_run_collection_commits_one_complete_sibling_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "protocol.json"
+    output_dir = tmp_path / "candidate"
+    _write_protocol(config_path)
+    real_replace = collection.os.replace
+    replacements: list[tuple[Path, Path]] = []
+
+    def replace(source: Path, target: Path) -> None:
+        replacements.append((Path(source), Path(target)))
+        real_replace(source, target)
+
+    monkeypatch.setattr(collection.os, "replace", replace)
+    summary = collection.run_collection(
+        config_path,
+        output_dir,
+        run_source_commit="a" * 40,
+        transport=FrozenFixtureTransport(),
+    )
+
+    assert Path(summary["output_dir"]) == output_dir
+    assert Path(summary["manifest_path"]) == output_dir / "manifest.json"
+    assert len(replacements) == 1
+    staged, committed = replacements[0]
+    assert staged.parent == output_dir.parent
+    assert committed == output_dir
+    assert not staged.exists()
+    assert (output_dir / "manifest.json").exists()
+
+
+def test_run_collection_commit_failure_leaves_no_output_or_staging_fragments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "protocol.json"
+    output_dir = tmp_path / "candidate"
+    _write_protocol(config_path)
+
+    def replace(_source: Path, _target: Path) -> None:
+        raise OSError("injected directory commit failure")
+
+    monkeypatch.setattr(collection.os, "replace", replace)
+
+    with pytest.raises(OSError, match="injected directory commit failure"):
+        collection.run_collection(
+            config_path,
+            output_dir,
+            run_source_commit="a" * 40,
+            transport=FrozenFixtureTransport(),
+        )
+    assert not output_dir.exists()
+    assert list(tmp_path.iterdir()) == [config_path]
+
+
+def test_run_collection_transport_failure_leaves_no_output_or_staging_fragments(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "protocol.json"
+    output_dir = tmp_path / "candidate"
+    _write_protocol(config_path)
+    fixture = FrozenFixtureTransport()
+
+    def transport(
+        method: str,
+        url: str,
+        body: bytes | None,
+        headers: dict[str, str],
+    ) -> bytes:
+        if method == "POST":
+            raise collection.CollectionError("injected history request failure")
+        return fixture(method, url, body, headers)
+
+    with pytest.raises(collection.CollectionError, match="injected history request failure"):
+        collection.run_collection(
+            config_path,
+            output_dir,
+            run_source_commit="a" * 40,
+            transport=transport,
+        )
+    assert not output_dir.exists()
+    assert list(tmp_path.iterdir()) == [config_path]

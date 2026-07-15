@@ -94,6 +94,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _HEX_32_RE = re.compile(r"^0x[0-9a-f]{64}$")
 _COLLECTOR_SCHEMA_VERSION = "event-factor-bench-collector-v1"
+_CHAIN_SCHEMA_VERSION = "event-factor-bench-chain-freeze-v2"
 _GAMMA_SOURCE = "gamma.events_keyset"
 _CLOB_SOURCE = "clob.batch_prices_history"
 _COLLECTOR_RAW_FIELDS = {
@@ -304,10 +305,27 @@ def sha256_gzip_content(path: str | Path) -> str:
 def load_json(path: str | Path) -> dict[str, Any]:
     """Load a JSON object and reject other top-level values."""
 
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    value = json.loads(
+        Path(path).read_text(encoding="utf-8"),
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_reject_duplicate_json_keys,
+    )
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value!r}")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
 
 
 def _validate_frozen_bindings(
@@ -334,7 +352,7 @@ def _validate_frozen_bindings(
     ):
         _require_digest(value, name)
 
-    if manifest.get("schema_version") != "event-factor-bench-chain-freeze-v1":
+    if manifest.get("schema_version") != _CHAIN_SCHEMA_VERSION:
         raise ValueError("unsupported or missing chain-freeze manifest schema")
     self_digest = manifest.get("manifest_payload_sha256")
     _require_digest(self_digest, "manifest_payload_sha256")
@@ -345,6 +363,7 @@ def _validate_frozen_bindings(
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode()
     if hashlib.sha256(canonical).hexdigest() != self_digest:
         raise ValueError("manifest payload self-hash does not match its contents")
@@ -358,6 +377,21 @@ def _validate_frozen_bindings(
     )
     if collector_file.get("sha256") != collector_manifest_sha256:
         raise ValueError("public collector manifest SHA-256 does not match chain manifest")
+    comparison_file = _mapping(
+        files.get("collector_comparison_v0.1.1.json"),
+        "collector comparison file record",
+    )
+    _require_digest(comparison_file.get("sha256"), "collector comparison file SHA-256")
+    _require_digest(
+        comparison_file.get("report_payload_sha256"),
+        "collector comparison payload SHA-256",
+    )
+    _require_digest(
+        comparison_file.get("new_collector_manifest_sha256"),
+        "collector comparison new-collector SHA-256",
+    )
+    if comparison_file.get("new_collector_manifest_sha256") != collector_manifest_sha256:
+        raise ValueError("collector comparison is not bound to the public collector manifest")
     frozen = _mapping(files.get("frozen_v0.1.csv.gz"), "frozen evidence file record")
     if frozen.get("sha256") != evidence_sha256:
         raise ValueError("frozen evidence SHA-256 does not match manifest")
@@ -714,11 +748,44 @@ def _validate_chain_sources(rows: list[EvidenceRow], manifest: Mapping[str, Any]
     if not isinstance(raw_records, list) or not raw_records:
         raise ValueError("manifest has no raw chain response records")
     raw_hashes: set[str] = set()
+    response_methods: dict[str, set[str]] = defaultdict(set)
+    allowed_methods = {
+        "eth_chainId",
+        "eth_blockNumber",
+        "eth_getBlockByNumber",
+        "eth_getLogs",
+    }
     for index, raw in enumerate(raw_records):
         record = _mapping(raw, f"raw response {index}")
+        expected_sequence = index + 1
+        sequence = _strict_nonnegative_int(record.get("sequence"), f"raw response {index} sequence")
+        request_id = _strict_nonnegative_int(
+            record.get("request_id"), f"raw response {index} request_id"
+        )
+        method = record.get("method")
+        params = record.get("params")
+        if sequence != expected_sequence or request_id != sequence:
+            raise ValueError("raw response request IDs must be contiguous from one")
+        if not isinstance(method, str) or not method or not isinstance(params, list):
+            raise ValueError(f"raw response {index} lacks canonical request metadata")
+        if method not in allowed_methods:
+            raise ValueError(f"raw response {index} uses an unknown JSON-RPC method")
+        request_digest = record.get("request_sha256")
+        _require_digest(request_digest, f"raw response {index} request SHA-256")
+        canonical_request = json.dumps(
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        if hashlib.sha256(canonical_request).hexdigest() != request_digest:
+            raise ValueError(f"raw response {index} request SHA-256 does not match metadata")
         digest = record.get("response_sha256")
         _require_digest(digest, f"raw response {index} SHA-256")
-        raw_hashes.add(digest)
+        digest_text = str(digest)
+        raw_hashes.add(digest_text)
+        response_methods[digest_text].add(method)
 
     bundles = manifest.get("chain_source_bundles")
     if not isinstance(bundles, list) or not bundles:
@@ -736,6 +803,11 @@ def _validate_chain_sources(rows: list[EvidenceRow], manifest: Mapping[str, Any]
             _require_digest(source, "chain source raw response SHA-256")
             if source not in raw_hashes:
                 raise ValueError("chain source bundle cites an absent raw response")
+        if (
+            "eth_getLogs" not in response_methods[sources[0]]
+            or "eth_getBlockByNumber" not in response_methods[sources[1]]
+        ):
+            raise ValueError("chain source bundle must order log evidence before block evidence")
         computed = hashlib.sha256(
             domain + bytes.fromhex(sources[0]) + bytes.fromhex(sources[1])
         ).hexdigest()

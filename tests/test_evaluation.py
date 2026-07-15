@@ -31,6 +31,26 @@ CHAIN_SOURCE_SHA = hashlib.sha256(
     + bytes.fromhex(RAW_BLOCK_SHA)
 ).hexdigest()
 
+
+def _rpc_record(sequence: int, method: str, params: list, response_sha256: str) -> dict:
+    request = {"jsonrpc": "2.0", "id": sequence, "method": method, "params": params}
+    request_bytes = json.dumps(
+        request,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return {
+        "sequence": sequence,
+        "request_id": sequence,
+        "method": method,
+        "params": params,
+        "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+        "response_sha256": response_sha256,
+    }
+
+
 FROZEN_FIELDS = [
     "event_id",
     "market_id",
@@ -221,7 +241,7 @@ def manifest(rows: list[EvidenceRow]) -> dict:
     ]
     condition_count = len({row.condition_id for row in rows})
     value = {
-        "schema_version": "event-factor-bench-chain-freeze-v1",
+        "schema_version": "event-factor-bench-chain-freeze-v2",
         "run_source_commit": "9" * 40,
         "onchain_verified": True,
         "gamma_candidate_mismatch_count": 0,
@@ -230,6 +250,11 @@ def manifest(rows: list[EvidenceRow]) -> dict:
             "collector_manifest_v0.1.json": {
                 "sha256": COLLECTOR_SHA,
                 "bytes": 1234,
+            },
+            "collector_comparison_v0.1.1.json": {
+                "sha256": "7" * 64,
+                "report_payload_sha256": "8" * 64,
+                "new_collector_manifest_sha256": COLLECTOR_SHA,
             },
             "frozen_v0.1.csv.gz": {
                 "sha256": EVIDENCE_SHA,
@@ -282,8 +307,13 @@ def manifest(rows: list[EvidenceRow]) -> dict:
             "retained_rows_after_complete_event_gate": len(rows),
         },
         "raw_responses": [
-            {"response_sha256": RAW_LOG_SHA},
-            {"response_sha256": RAW_BLOCK_SHA},
+            _rpc_record(
+                1,
+                "eth_getLogs",
+                [{"fromBlock": "0x1", "toBlock": "0x2", "topics": []}],
+                RAW_LOG_SHA,
+            ),
+            _rpc_record(2, "eth_getBlockByNumber", ["0x2", False], RAW_BLOCK_SHA),
         ],
         "chain_source_bundles": [
             {

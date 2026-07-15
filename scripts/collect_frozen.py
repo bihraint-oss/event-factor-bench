@@ -13,10 +13,16 @@ import argparse
 import csv
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import math
+import os
 import re
+import shutil
+import socket
+import ssl
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -46,6 +52,10 @@ LABEL_CAVEAT = (
 LABEL_SOURCE = "gamma_terminal_outcome_prices_candidate"
 MAX_BATCH_TOKENS = 20
 MAX_HISTORY_WINDOW_SECONDS = 15 * 24 * 60 * 60
+HTTP_MAX_ATTEMPTS = 10
+HTTP_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 60.0, 60.0)
+RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+COLLECTOR_USER_AGENT = "event-factor-bench/0.1.1 (+frozen-protocol-collector)"
 Transport = Callable[[str, str, bytes | None, Mapping[str, str]], bytes]
 
 
@@ -133,9 +143,22 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
 def _load_json(payload: bytes, context: str) -> Any:
     try:
-        return json.loads(payload, parse_constant=_reject_json_constant)
+        return json.loads(
+            payload,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise CollectionError(f"invalid JSON from {context}") from exc
 
@@ -190,13 +213,11 @@ def daily_windows(start: datetime, end: datetime) -> list[tuple[datetime, dateti
     return result
 
 
-def make_http_transport(*, timeout: float, retries: int = 5) -> Transport:
+def make_http_transport(*, timeout: float) -> Transport:
     """Build a small retrying urllib transport for read-only official API calls."""
 
     if timeout <= 0:
         raise ValueError("timeout must be positive")
-    if retries < 1:
-        raise ValueError("retries must be at least one")
 
     def transport(
         method: str,
@@ -210,21 +231,58 @@ def make_http_transport(*, timeout: float, retries: int = 5) -> Transport:
             headers=dict(headers),
             method=method,
         )
-        for attempt in range(retries):
+        for attempt in range(HTTP_MAX_ATTEMPTS):
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
-                    return response.read()
+                    if response.status == 200:
+                        return response.read()
+                    _classify_http_status(response.status, attempt, method)
             except urllib.error.HTTPError as exc:
-                retryable = exc.code == 429 or 500 <= exc.code < 600
-                if not retryable or attempt + 1 == retries:
-                    raise CollectionError(f"HTTP {exc.code} for {method} {url}") from exc
-            except (TimeoutError, urllib.error.URLError) as exc:
-                if attempt + 1 == retries:
-                    raise CollectionError(f"request failed for {method} {url}") from exc
-            time.sleep(min(0.5 * 2**attempt, 8.0))
+                try:
+                    _classify_http_status(exc.code, attempt, method)
+                except CollectionError as classified:
+                    raise classified from exc
+            except (
+                urllib.error.URLError,
+                TimeoutError,
+                ConnectionError,
+                http.client.HTTPException,
+                ssl.SSLError,
+                socket.gaierror,
+            ) as exc:
+                reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+                if not _is_retryable_transport_reason(reason):
+                    raise CollectionError(
+                        f"non-retryable network error for {method}: {reason}"
+                    ) from exc
+                if attempt + 1 == HTTP_MAX_ATTEMPTS:
+                    raise CollectionError(
+                        f"request failed for {method} after {HTTP_MAX_ATTEMPTS} attempts: {reason}"
+                    ) from exc
+            time.sleep(HTTP_BACKOFF_SECONDS[attempt])
         raise AssertionError("unreachable")
 
     return transport
+
+
+def _classify_http_status(status: Any, attempt: int, method: str) -> None:
+    if type(status) is not int or status not in RETRYABLE_HTTP_STATUSES:
+        raise CollectionError(f"HTTP status {status!r} is not retryable for {method}")
+    if attempt + 1 == HTTP_MAX_ATTEMPTS:
+        raise CollectionError(
+            f"HTTP status {status} for {method} after {HTTP_MAX_ATTEMPTS} attempts"
+        )
+
+
+def _is_retryable_transport_reason(reason: Any) -> bool:
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return False
+    if isinstance(reason, socket.gaierror):
+        return reason.errno == socket.EAI_AGAIN
+    return isinstance(
+        reason,
+        (TimeoutError, ConnectionError, http.client.IncompleteRead, ssl.SSLEOFError),
+    )
 
 
 def _validate_protocol(protocol: Mapping[str, Any]) -> None:
@@ -1076,7 +1134,47 @@ def run_collection(
     transport: Transport | None = None,
     timeout: float = 60.0,
     workers: int = 1,
-    user_agent: str = "event-factor-bench/0.1 (+frozen-protocol-collector)",
+    user_agent: str = COLLECTOR_USER_AGENT,
+) -> dict[str, Any]:
+    """Build a complete collection in a sibling stage, then publish it with one rename."""
+
+    output_dir = Path(output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise CollectionError(f"output directory must be absent or empty: {output_dir}")
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}-stage-", dir=output_dir.parent))
+    committed = False
+    try:
+        summary = _run_collection_in_place(
+            config_path,
+            stage,
+            run_source_commit=run_source_commit,
+            transport=transport,
+            timeout=timeout,
+            workers=workers,
+            user_agent=user_agent,
+        )
+        if output_dir.exists():
+            output_dir.rmdir()
+        os.replace(stage, output_dir)
+        committed = True
+        summary["manifest_path"] = str(output_dir / "manifest.json")
+        summary["output_dir"] = str(output_dir)
+        return summary
+    finally:
+        if not committed:
+            shutil.rmtree(stage, ignore_errors=True)
+
+
+def _run_collection_in_place(
+    config_path: Path,
+    output_dir: Path,
+    *,
+    run_source_commit: str,
+    transport: Transport | None = None,
+    timeout: float = 60.0,
+    workers: int = 1,
+    user_agent: str = COLLECTOR_USER_AGENT,
 ) -> dict[str, Any]:
     """Run the frozen-protocol collector and return its candidate-row summary."""
 
@@ -1148,6 +1246,22 @@ def run_collection(
         ],
         "benchmark": protocol.get("benchmark"),
         "generated_at": format_timestamp(datetime.now(tz=UTC)),
+        "collector_user_agent": user_agent,
+        "http_retry_policy": {
+            "max_attempts": HTTP_MAX_ATTEMPTS,
+            "backoff_seconds": list(HTTP_BACKOFF_SECONDS),
+            "timeout_seconds": timeout,
+            "retryable_http_statuses": sorted(RETRYABLE_HTTP_STATUSES),
+            "retryable_exception_classes": [
+                "TimeoutError",
+                "ConnectionError",
+                "http.client.IncompleteRead",
+                "ssl.SSLEOFError",
+                "socket.gaierror(EAI_AGAIN)",
+            ],
+            "certificate_errors_retryable": False,
+            "response_archive_scope": "successful_response_bytes_only",
+        },
         "label_caveat": LABEL_CAVEAT,
         "protocol_sha256": _sha256(config_bytes),
         "protocol_version": protocol.get("version"),

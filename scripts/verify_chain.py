@@ -13,11 +13,14 @@ import argparse
 import csv
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import math
 import os
 import shutil
+import socket
+import ssl
 import sys
 import tempfile
 import time as time_module
@@ -34,11 +37,13 @@ from urllib.parse import parse_qs, urlsplit
 POLYGON_CHAIN_ID = 137
 MAX_BLOCKS_PER_QUERY = 30_000
 MAX_CONDITIONS_PER_LOG_QUERY = 500
-RPC_MAX_ATTEMPTS = 5
-RPC_BACKOFF_SECONDS = (0.25, 0.5, 1.0, 2.0)
+RPC_HTTP_MAX_ATTEMPTS = 10
+RPC_HTTP_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 60.0, 60.0)
+RPC_JSON_MAX_ATTEMPTS = 5
+RPC_JSON_BACKOFF_SECONDS = (0.25, 0.5, 1.0, 2.0)
 RPC_RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 RPC_RETRYABLE_ERROR_CODES = {-32005, 429}
-RPC_USER_AGENT = "event-factor-bench/0.1 (+canonical-label-freeze)"
+RPC_USER_AGENT = "event-factor-bench/0.1.1 (+canonical-label-freeze)"
 COLLECTOR_SCHEMA_VERSION = "event-factor-bench-collector-v1"
 GAMMA_SOURCE = "gamma.events_keyset"
 CLOB_SOURCE = "clob.batch_prices_history"
@@ -117,6 +122,7 @@ class CandidateRow:
 @dataclass(frozen=True, slots=True)
 class RpcEvidence:
     sequence: int
+    request_id: int
     method: str
     params: list[Any]
     request_sha256: str
@@ -178,6 +184,12 @@ class JsonRpcClient:
         self.evidence: list[RpcEvidence] = []
 
     @property
+    def is_fresh(self) -> bool:
+        """Return whether no request ID or evidence slot has been consumed."""
+
+        return self._next_id == 1 and not self.evidence
+
+    @property
     def endpoint_sha256(self) -> str:
         """Hash the full endpoint so API credentials are not written to the manifest."""
 
@@ -195,12 +207,15 @@ class JsonRpcClient:
         return "redacted"
 
     def call(self, method: str, params: Sequence[Any]) -> RpcResult:
-        for attempt in range(RPC_MAX_ATTEMPTS):
+        for attempt in range(RPC_JSON_MAX_ATTEMPTS):
             request_id = self._next_id
             self._next_id += 1
             body = _canonical_json_bytes(
                 {"jsonrpc": "2.0", "id": request_id, "method": method, "params": list(params)}
             )
+            request_payload = _strict_json_loads(body)
+            if not isinstance(request_payload, dict):  # pragma: no cover - constructed above
+                raise AssertionError("canonical JSON-RPC request must be an object")
             try:
                 raw = self._transport(self.rpc_url, body, self.timeout)
             except Exception as exc:  # custom transports may raise non-urllib exceptions
@@ -212,8 +227,9 @@ class JsonRpcClient:
             self.evidence.append(
                 RpcEvidence(
                     sequence=len(self.evidence) + 1,
+                    request_id=request_id,
                     method=method,
-                    params=list(params),
+                    params=request_payload["params"],
                     request_sha256=_sha256(body),
                     response_sha256=response_sha256,
                     retrieved_at_utc=_utc_now(),
@@ -221,18 +237,27 @@ class JsonRpcClient:
                 )
             )
             try:
-                envelope = json.loads(raw)
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                envelope = _strict_json_loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 raise RpcError(f"{method} returned malformed JSON") from exc
             if not isinstance(envelope, dict):
                 raise RpcError(f"{method} returned a non-object JSON-RPC envelope")
-            if envelope.get("jsonrpc") != "2.0" or envelope.get("id") != request_id:
+            response_id = envelope.get("id")
+            if (
+                envelope.get("jsonrpc") != "2.0"
+                or type(response_id) is not int
+                or response_id != request_id
+            ):
                 raise RpcError(f"{method} returned a mismatched JSON-RPC envelope")
             error = envelope.get("error")
             if error is not None:
                 code = error.get("code") if isinstance(error, dict) else None
-                if code in RPC_RETRYABLE_ERROR_CODES and attempt + 1 < RPC_MAX_ATTEMPTS:
-                    time_module.sleep(RPC_BACKOFF_SECONDS[attempt])
+                if (
+                    type(code) is int
+                    and code in RPC_RETRYABLE_ERROR_CODES
+                    and attempt + 1 < RPC_JSON_MAX_ATTEMPTS
+                ):
+                    time_module.sleep(RPC_JSON_BACKOFF_SECONDS[attempt])
                     continue
                 raise RpcError(f"{method} RPC error: {error!r}")
             if "result" not in envelope:
@@ -349,7 +374,7 @@ def load_candidate_rows(
     path: Path,
     *,
     required_outcomes: Sequence[str] = ("Yes", "No"),
-) -> tuple[list[CandidateRow], dict[str, str]]:
+) -> tuple[list[CandidateRow], dict[str, Any]]:
     """Load flat CSV/JSON rows or nested ``{"events": [{"markets": ...}]}`` JSON."""
 
     source = path.read_bytes()
@@ -393,7 +418,7 @@ def _load_collector_manifest(
     path: Path,
     *,
     candidate_path: Path,
-    candidate_source: Mapping[str, str],
+    candidate_source: Mapping[str, Any],
     candidates: Sequence[CandidateRow],
     protocol: Mapping[str, Any],
     protocol_sha256: str,
@@ -405,8 +430,8 @@ def _load_collector_manifest(
 ]:
     payload = path.read_bytes()
     try:
-        manifest = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        manifest = _strict_json_loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise CandidateManifestError(f"cannot parse collector manifest JSON: {exc}") from exc
     if not isinstance(manifest, dict):
         raise CandidateManifestError("collector manifest must contain a JSON object")
@@ -516,6 +541,96 @@ def _load_collector_manifest(
         normalized,
         payload,
     )
+
+
+def _load_collector_comparison(
+    path: Path,
+    *,
+    failure_audit_path: Path,
+    collector_source: Mapping[str, str],
+    candidate_source: Mapping[str, Any],
+    coverage_pre_chain: Mapping[str, Any],
+    protocol_sha256: str,
+    run_source_commit: str,
+) -> tuple[dict[str, Any], bytes]:
+    payload = path.read_bytes()
+    try:
+        report = _strict_json_loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CandidateManifestError(f"cannot parse collector comparison JSON: {exc}") from exc
+    if not isinstance(report, dict):
+        raise CandidateManifestError("collector comparison must contain a JSON object")
+    if report.get("schema_version") != "event-factor-bench-collector-comparison-v1":
+        raise CandidateManifestError("unsupported collector comparison schema")
+    claimed_payload_sha = _collector_digest(
+        report.get("report_payload_sha256"), "collector comparison report_payload_sha256"
+    )
+    body = dict(report)
+    del body["report_payload_sha256"]
+    if _sha256(_canonical_json_bytes(body)) != claimed_payload_sha:
+        raise CandidateManifestError("collector comparison self-hash does not match")
+    if report.get("gate_passed") is not True or report.get("missing_explanations") != []:
+        raise CandidateManifestError("collector comparison explanation gate did not pass")
+    comparisons = report.get("substantive_comparisons")
+    if not isinstance(comparisons, list) or not comparisons:
+        raise CandidateManifestError("collector comparison has no substantive comparison rows")
+    for index, item in enumerate(comparisons):
+        if not isinstance(item, dict) or type(item.get("changed")) is not bool:
+            raise CandidateManifestError(f"collector comparison row {index} is malformed")
+        explanation = item.get("explanation")
+        if item["changed"] and (not isinstance(explanation, str) or not explanation.strip()):
+            raise CandidateManifestError(
+                f"collector comparison row {index} changed without an explanation"
+            )
+
+    failure_payload = failure_audit_path.read_bytes()
+    failure_record = report.get("failure_audit")
+    if not isinstance(failure_record, dict) or failure_record.get("sha256") != _sha256(
+        failure_payload
+    ):
+        raise CandidateManifestError("collector comparison is not bound to the failure audit")
+    try:
+        failure_audit = _strict_json_loads(failure_payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CandidateManifestError(f"cannot parse formal failure audit: {exc}") from exc
+    old = report.get("old")
+    failed = failure_audit.get("failed_source_freeze") if isinstance(failure_audit, dict) else None
+    if not isinstance(old, dict) or not isinstance(failed, dict):
+        raise CandidateManifestError("collector comparison lacks old failure provenance")
+    for report_key, audit_key in (
+        ("run_source_commit", "source_commit"),
+        ("collector_manifest_sha256", "collector_manifest_sha256"),
+        ("candidate_rows_gzip_sha256", "candidate_rows_gzip_sha256"),
+        ("candidate_rows_content_sha256", "candidate_rows_content_sha256"),
+        ("selection_audit_sha256", "selection_audit_sha256"),
+        ("candidate_rows", "candidate_rows"),
+        ("archived_api_responses", "archived_api_responses"),
+    ):
+        if old.get(report_key) != failed.get(audit_key):
+            raise CandidateManifestError(
+                f"collector comparison old {report_key} differs from failure audit"
+            )
+
+    new = report.get("new")
+    if not isinstance(new, dict):
+        raise CandidateManifestError("collector comparison lacks successor snapshot")
+    expected = {
+        "collector_manifest_sha256": collector_source["sha256"],
+        "run_source_commit": run_source_commit,
+        "protocol_sha256": protocol_sha256,
+        "candidate_rows_gzip_sha256": candidate_source["file_sha256"],
+        "candidate_rows_content_sha256": candidate_source["content_sha256"],
+        "candidate_rows": candidate_source["rows"],
+        "candidate_event_ids_any_horizon": candidate_source["event_ids_any_horizon"],
+        "candidate_event_horizon_curves": candidate_source["event_horizon_curves"],
+        "coverage_pre_chain": coverage_pre_chain,
+    }
+    for key, value in expected.items():
+        if new.get(key) != value:
+            raise CandidateManifestError(
+                f"collector comparison new {key} differs from the successor run"
+            )
+    return report, payload
 
 
 def _validate_collector_raw_provenance(
@@ -756,6 +871,8 @@ def verify_and_freeze(
     protocol_path: Path,
     candidate_path: Path,
     collector_manifest_path: Path,
+    collector_comparison_path: Path,
+    failure_audit_path: Path,
     data_dir: Path,
     rpc: JsonRpcClient,
     resolution_grace: timedelta | None = None,
@@ -763,7 +880,7 @@ def verify_and_freeze(
     overwrite: bool = False,
     run_source_commit: str = "",
 ) -> dict[str, Any]:
-    """Verify candidates and atomically publish frozen CSV, manifest, and raw evidence."""
+    """Verify candidates, stage outputs, and publish the manifest last as a commit marker."""
 
     if resolution_grace is not None and resolution_grace < timedelta(0):
         raise ValueError("resolution_grace must be non-negative")
@@ -775,10 +892,12 @@ def verify_and_freeze(
         or any(character not in "0123456789abcdef" for character in run_source_commit)
     ):
         raise CandidateManifestError("run_source_commit must be a full lowercase 40-hex commit")
+    if not rpc.is_fresh:
+        raise CandidateManifestError("formal chain verification requires a fresh JSON-RPC client")
 
     protocol_bytes = protocol_path.read_bytes()
     try:
-        protocol = json.loads(protocol_bytes)
+        protocol = _strict_json_loads(protocol_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CandidateManifestError(f"cannot parse protocol JSON: {exc}") from exc
     address, topic0, required_outcomes, accepted_vectors, protocol_grace_seconds = _parse_protocol(
@@ -796,6 +915,13 @@ def verify_and_freeze(
     candidates, candidate_source = load_candidate_rows(
         candidate_path, required_outcomes=required_outcomes
     )
+    candidate_source.update(
+        {
+            "rows": len(candidates),
+            "event_ids_any_horizon": len({row.event_id for row in candidates}),
+            "event_horizon_curves": len({(row.event_id, row.horizon) for row in candidates}),
+        }
+    )
     collector_source, coverage_pre_chain, collector_manifest_payload = _load_collector_manifest(
         collector_manifest_path,
         candidate_path=candidate_path,
@@ -805,13 +931,30 @@ def verify_and_freeze(
         protocol_sha256=_sha256(protocol_bytes),
         run_source_commit=run_source_commit,
     )
+    collector_comparison, collector_comparison_payload = _load_collector_comparison(
+        collector_comparison_path,
+        failure_audit_path=failure_audit_path,
+        collector_source=collector_source,
+        candidate_source=candidate_source,
+        coverage_pre_chain=coverage_pre_chain,
+        protocol_sha256=_sha256(protocol_bytes),
+        run_source_commit=run_source_commit,
+    )
 
     output_csv = data_dir / "frozen_v0.1.csv.gz"
     output_manifest = data_dir / "manifest_v0.1.json"
     output_collector_manifest = data_dir / "collector_manifest_v0.1.json"
+    output_collector_comparison = data_dir / "collector_comparison_v0.1.1.json"
     raw_dir = data_dir / "raw_chain_v0.1"
     _preflight_outputs(
-        (output_csv, output_manifest, output_collector_manifest, raw_dir), overwrite=overwrite
+        (
+            output_csv,
+            output_manifest,
+            output_collector_manifest,
+            output_collector_comparison,
+            raw_dir,
+        ),
+        overwrite=overwrite,
     )
 
     chain_id_result = rpc.call("eth_chainId", [])
@@ -929,7 +1072,7 @@ def verify_and_freeze(
     nested_coverage = _nested_coverage(coverage)
 
     manifest: dict[str, Any] = {
-        "schema_version": "event-factor-bench-chain-freeze-v1",
+        "schema_version": "event-factor-bench-chain-freeze-v2",
         "generated_at_utc": generated_at,
         "run_source_commit": run_source_commit,
         "onchain_verified": onchain_verified,
@@ -954,10 +1097,26 @@ def verify_and_freeze(
             "max_blocks_per_query": max_blocks_per_query,
             "max_conditions_per_log_query": MAX_CONDITIONS_PER_LOG_QUERY,
             "rpc_retry_policy": {
-                "max_attempts": RPC_MAX_ATTEMPTS,
-                "backoff_seconds": list(RPC_BACKOFF_SECONDS),
-                "retryable_http_statuses": sorted(RPC_RETRYABLE_HTTP_STATUSES),
-                "retryable_json_rpc_error_codes": sorted(RPC_RETRYABLE_ERROR_CODES),
+                "http_transport": {
+                    "max_attempts": RPC_HTTP_MAX_ATTEMPTS,
+                    "backoff_seconds": list(RPC_HTTP_BACKOFF_SECONDS),
+                    "timeout_seconds": rpc.timeout,
+                    "retryable_http_statuses": sorted(RPC_RETRYABLE_HTTP_STATUSES),
+                    "retryable_exception_classes": [
+                        "TimeoutError",
+                        "ConnectionError",
+                        "http.client.IncompleteRead",
+                        "ssl.SSLEOFError",
+                        "socket.gaierror(EAI_AGAIN)",
+                    ],
+                    "certificate_errors_retryable": False,
+                    "response_archive_scope": "received_json_rpc_envelopes_only",
+                },
+                "json_rpc_envelope": {
+                    "max_attempts": RPC_JSON_MAX_ATTEMPTS,
+                    "backoff_seconds": list(RPC_JSON_BACKOFF_SECONDS),
+                    "retryable_error_codes": sorted(RPC_RETRYABLE_ERROR_CODES),
+                },
             },
             "inclusive_chunk_boundary_deduplication": True,
             "search_windows": search_windows,
@@ -1004,6 +1163,11 @@ def verify_and_freeze(
                 "sha256": _sha256(collector_manifest_payload),
                 "bytes": len(collector_manifest_payload),
             },
+            "collector_comparison_v0.1.1.json": {
+                "sha256": _sha256(collector_comparison_payload),
+                "report_payload_sha256": collector_comparison["report_payload_sha256"],
+                "new_collector_manifest_sha256": collector_source["sha256"],
+            },
             "frozen_v0.1.csv.gz": {
                 "sha256": _sha256(csv_gzip),
                 "uncompressed_sha256": _sha256(csv_plain),
@@ -1017,6 +1181,7 @@ def verify_and_freeze(
         data_dir=data_dir,
         csv_payload=csv_gzip,
         collector_manifest_payload=collector_manifest_payload,
+        collector_comparison_payload=collector_comparison_payload,
         manifest_payload=manifest_bytes,
         raw_payloads=raw_payloads,
         overwrite=overwrite,
@@ -1444,6 +1609,7 @@ def _raw_evidence_manifest(
         records.append(
             {
                 "sequence": item.sequence,
+                "request_id": item.request_id,
                 "method": item.method,
                 "params": item.params,
                 "request_sha256": item.request_sha256,
@@ -1463,6 +1629,7 @@ def _publish_outputs(
     data_dir: Path,
     csv_payload: bytes,
     collector_manifest_payload: bytes,
+    collector_comparison_payload: bytes,
     manifest_payload: bytes,
     raw_payloads: Mapping[str, bytes],
     overwrite: bool,
@@ -1470,9 +1637,12 @@ def _publish_outputs(
     data_dir.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".verify-chain-", dir=data_dir))
     raw_stage = stage / "raw_chain_v0.1"
+    published: list[Path] = []
+    backups: list[tuple[Path, Path]] = []
     try:
         (stage / "frozen_v0.1.csv.gz").write_bytes(csv_payload)
         (stage / "collector_manifest_v0.1.json").write_bytes(collector_manifest_payload)
+        (stage / "collector_comparison_v0.1.1.json").write_bytes(collector_comparison_payload)
         (stage / "manifest_v0.1.json").write_bytes(manifest_payload)
         raw_stage.mkdir()
         for relative, payload in raw_payloads.items():
@@ -1484,21 +1654,49 @@ def _publish_outputs(
         targets = (
             data_dir / "frozen_v0.1.csv.gz",
             data_dir / "collector_manifest_v0.1.json",
+            data_dir / "collector_comparison_v0.1.1.json",
             data_dir / "manifest_v0.1.json",
             data_dir / "raw_chain_v0.1",
         )
         if overwrite:
-            for target in targets:
-                if target.is_dir():
-                    shutil.rmtree(target)
-                elif target.exists():
-                    target.unlink()
-        os.replace(raw_stage, targets[3])
-        os.replace(stage / "frozen_v0.1.csv.gz", targets[0])
-        os.replace(stage / "collector_manifest_v0.1.json", targets[1])
-        os.replace(stage / "manifest_v0.1.json", targets[2])
+            previous = stage / ".previous"
+            previous.mkdir()
+            for index, target in enumerate(targets):
+                if target.exists():
+                    backup = previous / f"{index:02d}_{target.name}"
+                    os.replace(target, backup)
+                    backups.append((backup, target))
+        elif any(target.exists() for target in targets):
+            raise ChainVerificationError("evidence targets appeared after preflight")
+
+        # The manifest is the commit marker and is deliberately moved last.  Caught failures
+        # remove all newly published paths and restore any overwrite backups.
+        sources_and_targets = (
+            (raw_stage, targets[4]),
+            (stage / "frozen_v0.1.csv.gz", targets[0]),
+            (stage / "collector_manifest_v0.1.json", targets[1]),
+            (stage / "collector_comparison_v0.1.1.json", targets[2]),
+            (stage / "manifest_v0.1.json", targets[3]),
+        )
+        for source, target in sources_and_targets:
+            os.replace(source, target)
+            published.append(target)
+    except BaseException:
+        for target in reversed(published):
+            _remove_path(target)
+        for backup, target in reversed(backups):
+            if backup.exists():
+                os.replace(backup, target)
+        raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
 
 
 def _preflight_outputs(paths: Sequence[Path], *, overwrite: bool) -> None:
@@ -1679,7 +1877,34 @@ def _hex_bytes(value: Any, name: str) -> bytes:
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value!r}")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
+def _strict_json_loads(value: bytes | str) -> Any:
+    return json.loads(
+        value,
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_reject_duplicate_json_keys,
+    )
 
 
 def _sha256(value: bytes) -> str:
@@ -1711,22 +1936,53 @@ def _http_transport(url: str, body: bytes, timeout: float) -> bytes:
         },
         method="POST",
     )
-    for attempt in range(RPC_MAX_ATTEMPTS):
+    for attempt in range(RPC_HTTP_MAX_ATTEMPTS):
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                if response.status != 200:
-                    raise RpcError(f"HTTP status {response.status}")
-                return response.read()
+                if response.status == 200:
+                    return response.read()
+                _classify_http_status(response.status, attempt)
         except urllib.error.HTTPError as exc:
-            retryable = exc.code in RPC_RETRYABLE_HTTP_STATUSES
-            if not retryable or attempt + 1 == RPC_MAX_ATTEMPTS:
-                raise RpcError(f"HTTP status {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            if attempt + 1 == RPC_MAX_ATTEMPTS:
-                reason = getattr(exc, "reason", str(exc))
-                raise RpcError(f"network error: {reason}") from exc
-        time_module.sleep(RPC_BACKOFF_SECONDS[attempt])
+            try:
+                _classify_http_status(exc.code, attempt)
+            except RpcError as classified:
+                raise classified from exc
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+            ssl.SSLError,
+            socket.gaierror,
+        ) as exc:
+            reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            retryable = _is_retryable_transport_reason(reason)
+            if not retryable:
+                raise RpcError(f"non-retryable network error: {reason}") from exc
+            if attempt + 1 == RPC_HTTP_MAX_ATTEMPTS:
+                raise RpcError(
+                    f"retryable network error after {RPC_HTTP_MAX_ATTEMPTS} attempts: {reason}"
+                ) from exc
+        time_module.sleep(RPC_HTTP_BACKOFF_SECONDS[attempt])
     raise AssertionError("unreachable retry loop")
+
+
+def _classify_http_status(status: Any, attempt: int) -> None:
+    if type(status) is not int or status not in RPC_RETRYABLE_HTTP_STATUSES:
+        raise RpcError(f"HTTP status {status!r} is not retryable")
+    if attempt + 1 == RPC_HTTP_MAX_ATTEMPTS:
+        raise RpcError(f"HTTP status {status} after {RPC_HTTP_MAX_ATTEMPTS} attempts")
+
+
+def _is_retryable_transport_reason(reason: Any) -> bool:
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return False
+    if isinstance(reason, socket.gaierror):
+        return reason.errno == socket.EAI_AGAIN
+    return isinstance(
+        reason,
+        (TimeoutError, ConnectionError, http.client.IncompleteRead, ssl.SSLEOFError),
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1734,6 +1990,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--protocol", type=Path, required=True)
     parser.add_argument("--input", dest="candidate_path", type=Path, required=True)
     parser.add_argument("--collector-manifest", type=Path, required=True)
+    parser.add_argument("--collector-comparison", type=Path, required=True)
+    parser.add_argument("--failure-audit", type=Path, required=True)
     parser.add_argument("--rpc-url", required=True)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--rpc-timeout", type=float, default=30.0)
@@ -1759,6 +2017,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             protocol_path=args.protocol,
             candidate_path=args.candidate_path,
             collector_manifest_path=args.collector_manifest,
+            collector_comparison_path=args.collector_comparison,
+            failure_audit_path=args.failure_audit,
             data_dir=args.data_dir,
             rpc=rpc,
             resolution_grace=(

@@ -17,6 +17,7 @@ from types import ModuleType
 from typing import Any
 
 COLLECTOR_SCHEMA_VERSION = "event-factor-bench-collector-v1"
+CHAIN_SCHEMA_VERSION = "event-factor-bench-chain-freeze-v2"
 REPLAY_ARTIFACTS = (
     "candidate_rows_v0.1.csv.gz",
     "selection_audit.json",
@@ -34,7 +35,11 @@ def sha256(path: Path) -> str:
 
 
 def load_object(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = json.loads(
+        path.read_text(encoding="utf-8"),
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_reject_duplicate_json_keys,
+    )
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
@@ -76,6 +81,19 @@ def canonical_json(value: Any) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value!r}")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
 
 
 class ArchivedTransport:
@@ -244,6 +262,13 @@ def replay_collection(root: Path, manifest: Mapping[str, Any]) -> None:
     source_commit = manifest.get("run_source_commit")
     if not isinstance(source_commit, str):
         raise ValueError("collector manifest lacks run_source_commit")
+    user_agent = manifest.get("collector_user_agent")
+    retry_policy = manifest.get("http_retry_policy")
+    if not isinstance(user_agent, str) or not isinstance(retry_policy, Mapping):
+        raise ValueError("collector manifest lacks transport policy provenance")
+    timeout = retry_policy.get("timeout_seconds")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise ValueError("collector manifest has an invalid HTTP timeout")
 
     with tempfile.TemporaryDirectory(prefix="event-factor-bench-replay-") as temporary:
         replay_root = Path(temporary) / "collection"
@@ -253,7 +278,9 @@ def replay_collection(root: Path, manifest: Mapping[str, Any]) -> None:
                 replay_root,
                 run_source_commit=source_commit,
                 transport=transport,
+                timeout=float(timeout),
                 workers=1,
+                user_agent=user_agent,
             )
             transport.assert_exhausted()
         except Exception as exc:
@@ -292,6 +319,8 @@ def audit_chain(
     candidate_sha: str,
     expected_source_commit: str,
 ) -> int:
+    if manifest.get("schema_version") != CHAIN_SCHEMA_VERSION:
+        raise ValueError("chain manifest has an unsupported schema version")
     collector = manifest.get("collector_manifest")
     candidate = manifest.get("candidate_manifest")
     if not isinstance(collector, Mapping) or not isinstance(candidate, Mapping):
@@ -324,9 +353,37 @@ def audit_chain(
         raise ValueError("chain manifest lacks non-empty raw-response records")
     response_hashes: set[str] = set()
     response_methods: dict[str, set[str]] = {}
-    for raw in raw_records:
+    request_ids: set[int] = set()
+    allowed_methods = {
+        "eth_chainId",
+        "eth_blockNumber",
+        "eth_getBlockByNumber",
+        "eth_getLogs",
+    }
+    for expected_sequence, raw in enumerate(raw_records, start=1):
         if not isinstance(raw, Mapping):
             raise ValueError("chain raw-response record must be an object")
+        sequence = raw.get("sequence")
+        request_id = raw.get("request_id")
+        method = raw.get("method")
+        params = raw.get("params")
+        if type(sequence) is not int or sequence != expected_sequence:
+            raise ValueError("chain raw-response sequence must be contiguous from one")
+        if type(request_id) is not int or request_id != sequence or request_id in request_ids:
+            raise ValueError("chain JSON-RPC request IDs must be unique and match sequence")
+        if not isinstance(method, str) or not method or not isinstance(params, list):
+            raise ValueError("chain raw-response record lacks canonical request metadata")
+        if method not in allowed_methods:
+            raise ValueError("chain raw-response record uses an unknown JSON-RPC method")
+        request_ids.add(request_id)
+        expected_request = canonical_json(
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        )
+        require_digest(
+            hashlib.sha256(expected_request).hexdigest(),
+            raw.get("request_sha256"),
+            f"chain JSON-RPC request {request_id}",
+        )
         path = safe_child(root, raw.get("gzip_path"))
         payload = path.read_bytes()
         require_digest(hashlib.sha256(payload).hexdigest(), raw.get("gzip_sha256"), str(path))
@@ -334,10 +391,23 @@ def audit_chain(
         require_digest(
             hashlib.sha256(content).hexdigest(), raw.get("response_sha256"), f"{path} content"
         )
+        try:
+            envelope = json.loads(
+                content,
+                parse_constant=_reject_json_constant,
+                object_pairs_hook=_reject_duplicate_json_keys,
+            )
+        except (UnicodeDecodeError, ValueError) as error:
+            raise ValueError(f"{path} is not strict JSON") from error
+        response_id = envelope.get("id") if isinstance(envelope, Mapping) else None
+        if (
+            not isinstance(envelope, Mapping)
+            or envelope.get("jsonrpc") != "2.0"
+            or type(response_id) is not int
+            or response_id != request_id
+        ):
+            raise ValueError("archived JSON-RPC response does not match its request ID")
         response_sha = str(raw["response_sha256"])
-        method = raw.get("method")
-        if not isinstance(method, str) or not method:
-            raise ValueError("chain raw-response record lacks an RPC method")
         response_hashes.add(response_sha)
         response_methods.setdefault(response_sha, set()).add(method)
 
@@ -375,7 +445,7 @@ def audit_chain(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--collection-dir", type=Path, default=Path("artifacts/collection-v0.1"))
+    parser.add_argument("--collection-dir", type=Path, default=Path("artifacts/collection-v0.1.1"))
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--expected-source-commit", required=True)
     return parser.parse_args()

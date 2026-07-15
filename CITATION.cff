@@ -4,7 +4,7 @@ title: "EventFactorBench: A leakage-audited, event-balanced benchmark for predic
 type: software
 authors:
   - name: "bihraint-oss"
-version: 0.1.0
+version: 0.1.1
 date-released: 2026-07-15
 license: MIT
 repository-code: "https://github.com/bihraint-oss/event-factor-bench"

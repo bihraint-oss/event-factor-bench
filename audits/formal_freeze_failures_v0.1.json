@@ -1,0 +1,145 @@
+{
+  "schema_version": "event-factor-bench-formal-freeze-failures-v1",
+  "recorded_at_utc": "2026-07-15T04:07:55Z",
+  "scope": "transport and publication state only; no model fitting or scoring",
+  "statistical_protocol": {
+    "config_path": "configs/protocol_v0.1.json",
+    "config_version": "0.1.0",
+    "config_sha256": "79877551a7fa2ff8b26f15fb9d70aeb27c9b111ce204c1ac9d9f1aac3fc86320",
+    "claim_gate_path": "CLAIM_GATE.md",
+    "claim_gate_sha256": "0e21e7be1486fe500b1baec391f329c532ef0ee83c254a93b68c99e926b8bc12",
+    "development_audit_path": "audits/development_precommit_v0.1.json",
+    "development_audit_sha256": "6676813eb1fed7210258e556aee2719d446c945878aa448a15bba3a2652ddde7",
+    "unchanged_for_successor": true
+  },
+  "failed_source_freeze": {
+    "source_tag": "protocol-v0.1",
+    "source_tag_object": "67723a5949da6aaa0b6f81421e4641e394710cde",
+    "source_commit": "98c3d1a02ee6bec5593c51f9526e1ba2f989211e",
+    "collector_generated_at_utc": "2026-07-14T20:12:00Z",
+    "collector_manifest_sha256": "61fe05cded5e8102788f969fa971db13567b397f9c7a0683a553c02471993393",
+    "candidate_rows_gzip_sha256": "16f6e766e30c4f87c8cb2ce65d600b83d78705c7716fa03a0abfa6759eb1aaf4",
+    "candidate_rows_content_sha256": "781c2736d60f3a7e94edfd1db7e9540ea2f65585c12129a9aed42104360a43f9",
+    "selection_audit_sha256": "63c9e183fc0e41658498873b4c9a7c045a296a7ac9d2cccdd14fb89943ee3a6b",
+    "candidate_rows": 67156,
+    "candidate_event_ids_any_horizon": 1877,
+    "candidate_event_horizon_curves": 3731,
+    "events_selected_before_history": 1963,
+    "archived_api_responses": 2006,
+    "holdout_pre_chain_primary_coverage": {
+      "horizon_seconds": 1800,
+      "expected_events": 619,
+      "history_retained_events": 597,
+      "event_history_coverage": 0.9644588045234249,
+      "expected_rows": 11140,
+      "history_retained_rows": 10748,
+      "row_history_coverage": 0.9648114901256732
+    }
+  },
+  "local_session_logs": {
+    "stdout": {
+      "observed_path": "/tmp/eventfactor-freeze-v01.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stderr": {
+      "observed_path": "/tmp/eventfactor-freeze-v01.err",
+      "bytes": 600,
+      "sha256": "4873e55b3e1415e423811032762fda2dbad09d60efc71dffe3092fc5eacc8eeb"
+    },
+    "per_invocation_timestamps_available": false,
+    "caveat": "The local files are not redistributed. Their hashes bind this report to the bytes inspected while preparing the successor. File metadata does not establish individual invocation times."
+  },
+  "observed_records_in_stderr_order": [
+    {
+      "record": 1,
+      "status": "failed_closed",
+      "method": "eth_getLogs",
+      "failure_class": "transport",
+      "diagnostic": "Remote end closed connection without response",
+      "make_exit": 2
+    },
+    {
+      "record": 2,
+      "status": "failed_closed",
+      "method": "eth_getBlockByNumber",
+      "failure_class": "transport",
+      "diagnostic": "network error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032)",
+      "make_exit": 2
+    },
+    {
+      "record": 3,
+      "status": "failed_closed",
+      "method": "eth_getBlockByNumber",
+      "failure_class": "transport",
+      "diagnostic": "network error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032)",
+      "make_exit": 2
+    },
+    {
+      "record": 4,
+      "status": "session_terminated",
+      "failure_class": "make_session",
+      "diagnostic": "make: *** [freeze-labels] Error 143",
+      "chain_verifier_diagnostic_in_record": false
+    }
+  ],
+  "record_counts": {
+    "completed_failed_closed_invocations": 3,
+    "distinct_transport_failure_signatures": 2,
+    "terminated_make_session_records": 1
+  },
+  "publication_and_scoring_state": {
+    "attestation_basis": "operator attestation plus absence of frozen evidence, result, and evaluator-output files in the inspected source snapshot",
+    "frozen_evidence_files_published": false,
+    "evidence_tag_created": false,
+    "result_file_created": false,
+    "evaluator_invoked": false,
+    "model_scores_computed": false,
+    "holdout_operational_coverage_observed": true,
+    "caveat": "The holdout coverage above was visible from the completed collector manifest. No completed frozen-label set, fitted model output, Brier score, log loss, confidence interval, or claim-gate result was produced."
+  },
+  "successor_plan": {
+    "software_and_release_version": "0.1.1",
+    "source_tag": "protocol-v0.1.1",
+    "evidence_tag": "frozen-v0.1.1-run",
+    "transport_and_evidence_only_successor": true,
+    "statistical_config_path_remains": "configs/protocol_v0.1.json",
+    "data_and_result_namespace_remains": "v0.1",
+    "failed_attempt_local_collection_dir": "artifacts/collection-v0.1",
+    "successor_local_collection_dir": "artifacts/collection-v0.1.1",
+    "full_collector_rerun_required": true,
+    "rerun_reason": "The collector manifest binds run_source_commit to protocol-v0.1. A protocol-v0.1.1 chain run must consume a collector manifest generated at that same successor commit rather than relabeling old bytes.",
+    "collector_publication": "build in a sibling staging directory and expose the complete snapshot with one directory rename",
+    "chain_publication": "stage all outputs, restore prior files after caught publication failures, and publish the chain manifest last as the commit marker",
+    "http_transport_attempts": 10,
+    "json_rpc_envelope_attempts": 5,
+    "chain_manifest_schema": "event-factor-bench-chain-freeze-v2",
+    "collector_comparison_public_path": "data/collector_comparison_v0.1.1.json",
+    "collector_comparison_schema": "event-factor-bench-collector-comparison-v1",
+    "collector_comparison_evidence_bound": true,
+    "collector_comparison_ci_verified": true,
+    "public_evidence_files": [
+      "data/frozen_v0.1.csv.gz",
+      "data/collector_manifest_v0.1.json",
+      "data/collector_comparison_v0.1.1.json",
+      "data/manifest_v0.1.json"
+    ],
+    "raw_api_and_rpc_bytes_redistributed": false,
+    "source_and_evidence_tags_must_be_annotated": true,
+    "formal_collection_requires_origin_source_tag": true,
+    "formal_scoring_target": "make score-frozen",
+    "formal_scoring_requires_origin_evidence_tag": true,
+    "formal_scoring_requires_exact_evidence_commit": true,
+    "evidence_tag_must_exclude_results": true,
+    "result_commit_must_preserve_complete_data_tree": true,
+    "required_pre_score_comparison": [
+      "statistical protocol SHA-256 equality",
+      "collector manifest and candidate gzip SHA-256",
+      "candidate row and event counts",
+      "archived API response count",
+      "selection-audit SHA-256",
+      "coverage by split and horizon",
+      "an explanation for every observed delta"
+    ]
+  }
+}
