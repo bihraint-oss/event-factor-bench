@@ -4,51 +4,51 @@
     "1800": {
       "beta": {
         "coefficients": [
-          1.8349097838047885,
-          2.484138378032719
+          1.834909783805,
+          2.484138378033
         ],
         "epsilon": 1e-06,
-        "intercept": -0.3796943795687686,
+        "intercept": -0.379694379569,
         "iterations": 6,
         "l2": 0.001,
         "method": "beta",
-        "objective": 0.13554624821842165
+        "objective": 0.135546248218
       },
       "platt": {
         "coefficients": [
-          2.219505698491896
+          2.219505698492
         ],
         "epsilon": 1e-06,
-        "intercept": 0.13130069974246894,
+        "intercept": 0.131300699742,
         "iterations": 6,
         "l2": 0.001,
         "method": "platt",
-        "objective": 0.13344157162927292
+        "objective": 0.133441571629
       }
     },
     "900": {
       "beta": {
         "coefficients": [
-          1.72255190622142,
-          2.0680744549684547
+          1.722551906221,
+          2.068074454968
         ],
         "epsilon": 1e-06,
-        "intercept": -0.4179169486137911,
+        "intercept": -0.417916948614,
         "iterations": 6,
         "l2": 0.001,
         "method": "beta",
-        "objective": 0.14222770682932745
+        "objective": 0.142227706829
       },
       "platt": {
         "coefficients": [
-          1.9615601074034659
+          1.961560107403
         ],
         "epsilon": 1e-06,
-        "intercept": -0.1568616755280588,
+        "intercept": -0.156861675528,
         "iterations": 6,
         "l2": 0.001,
         "method": "platt",
-        "objective": 0.1404742955449286
+        "objective": 0.140474295545
       }
     }
   },
@@ -72,6 +72,10 @@
     "semantics": "strict terminal Gamma outcomePrices [1,0] or [0,1]",
     "source": "gamma_terminal_outcome_prices_candidate"
   },
+  "numeric_serialization": {
+    "decimal_places": 12,
+    "purpose": "cross-platform deterministic JSON"
+  },
   "protocol_version": "0.1.0",
   "release_version": "0.2.0",
   "reporting_screen": {
@@ -88,12 +92,12 @@
     },
     "confirmatory_frozen_protocol_claim": false,
     "coverage": {
-      "event_coverage": 0.9644588045234249,
+      "event_coverage": 0.964458804523,
       "expected_events": 619,
       "expected_rows": 11140,
       "retained_events": 597,
       "retained_rows": 10748,
-      "row_coverage": 0.9648114901256732
+      "row_coverage": 0.964811490126
     },
     "statistical_screen_passed": true
   },
@@ -104,73 +108,73 @@
       "1800": {
         "asset_subgroups": {
           "Bitcoin": {
-            "brier_delta": 0.0032392836777111744,
+            "brier_delta": 0.003239283678,
             "events": 412
           },
           "Ethereum": {
-            "brier_delta": 0.0024481990625390346,
+            "brier_delta": 0.002448199063,
             "events": 413
           }
         },
         "comparisons": {
           "beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.01284849283716185,
-            "log_loss_delta": 0.05490139961157245,
+            "brier_delta": 0.012848492837,
+            "log_loss_delta": 0.054901399612,
             "model": "beta",
-            "relative_brier_improvement": 0.2752292104588057
+            "relative_brier_improvement": 0.275229210459
           },
           "pav_beta_vs_beta": {
             "baseline": "beta",
-            "brier_delta": 0.0023788002821149706,
-            "log_loss_delta": 0.00870872404544236,
+            "brier_delta": 0.002378800282,
+            "log_loss_delta": 0.008708724045,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.07030717326171877
+            "relative_brier_improvement": 0.070307173262
           },
           "pav_beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.01522729311927682,
-            "log_loss_delta": 0.06361012365701481,
+            "brier_delta": 0.015227293119,
+            "log_loss_delta": 0.063610123657,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.3261857959341112
+            "relative_brier_improvement": 0.326185795934
           },
           "pav_raw_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.002843261924903792,
-            "log_loss_delta": 0.004483964209220148,
+            "brier_delta": 0.002843261925,
+            "log_loss_delta": 0.004483964209,
             "model": "pav_raw",
-            "relative_brier_improvement": 0.06090587780502004
+            "relative_brier_improvement": 0.060905877805
           }
         },
         "events": 825,
         "methods": {
           "beta": {
-            "event_macro_brier": 0.033834389462080575,
-            "event_macro_log_loss": 0.1307773494759065,
+            "event_macro_brier": 0.033834389462,
+            "event_macro_log_loss": 0.130777349476,
             "events_with_violations": 770,
             "monotonicity_violation_edges": 2028
           },
           "pav_beta": {
-            "event_macro_brier": 0.031455589179965604,
-            "event_macro_log_loss": 0.12206862543046414,
+            "event_macro_brier": 0.03145558918,
+            "event_macro_log_loss": 0.12206862543,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "pav_raw": {
-            "event_macro_brier": 0.04383962037433863,
-            "event_macro_log_loss": 0.1811947848782588,
+            "event_macro_brier": 0.043839620374,
+            "event_macro_log_loss": 0.181194784878,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "platt": {
-            "event_macro_brier": 0.03365482076451081,
-            "event_macro_log_loss": 0.13097850238374611,
+            "event_macro_brier": 0.033654820765,
+            "event_macro_log_loss": 0.130978502384,
             "events_with_violations": 770,
             "monotonicity_violation_edges": 2028
           },
           "raw": {
-            "event_macro_brier": 0.046682882299242424,
-            "event_macro_log_loss": 0.18567874908747894,
+            "event_macro_brier": 0.046682882299,
+            "event_macro_log_loss": 0.185678749087,
             "events_with_violations": 770,
             "monotonicity_violation_edges": 2028
           }
@@ -181,73 +185,73 @@
       "900": {
         "asset_subgroups": {
           "Bitcoin": {
-            "brier_delta": 0.00371115683462106,
+            "brier_delta": 0.003711156835,
             "events": 417
           },
           "Ethereum": {
-            "brier_delta": 0.0033457816801358772,
+            "brier_delta": 0.00334578168,
             "events": 419
           }
         },
         "comparisons": {
           "beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.004971473833040696,
-            "log_loss_delta": 0.029095158893547246,
+            "brier_delta": 0.004971473833,
+            "log_loss_delta": 0.029095158894,
             "model": "beta",
-            "relative_brier_improvement": 0.10295685939109014
+            "relative_brier_improvement": 0.102956859391
           },
           "pav_beta_vs_beta": {
             "baseline": "beta",
-            "brier_delta": 0.0036979977547776585,
-            "log_loss_delta": 0.007130746394626353,
+            "brier_delta": 0.003697997755,
+            "log_loss_delta": 0.007130746395,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.08537356991938062
+            "relative_brier_improvement": 0.085373569919
           },
           "pav_beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.008669471587818355,
-            "log_loss_delta": 0.0362259052881736,
+            "brier_delta": 0.008669471588,
+            "log_loss_delta": 0.036225905288,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.1795406346765657
+            "relative_brier_improvement": 0.179540634677
           },
           "pav_raw_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.003528032205758272,
-            "log_loss_delta": 0.004463478053541886,
+            "brier_delta": 0.003528032206,
+            "log_loss_delta": 0.004463478054,
             "model": "pav_raw",
-            "relative_brier_improvement": 0.07306386957553933
+            "relative_brier_improvement": 0.073063869576
           }
         },
         "events": 836,
         "methods": {
           "beta": {
-            "event_macro_brier": 0.04331548696241385,
-            "event_macro_log_loss": 0.13860566117117518,
+            "event_macro_brier": 0.043315486962,
+            "event_macro_log_loss": 0.138605661171,
             "events_with_violations": 780,
             "monotonicity_violation_edges": 1948
           },
           "pav_beta": {
-            "event_macro_brier": 0.03961748920763619,
-            "event_macro_log_loss": 0.13147491477654882,
+            "event_macro_brier": 0.039617489208,
+            "event_macro_log_loss": 0.131474914777,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "pav_raw": {
-            "event_macro_brier": 0.044758928589696274,
-            "event_macro_log_loss": 0.16323734201118054,
+            "event_macro_brier": 0.04475892859,
+            "event_macro_log_loss": 0.163237342011,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "platt": {
-            "event_macro_brier": 0.04325180256386928,
-            "event_macro_log_loss": 0.13855046723146083,
+            "event_macro_brier": 0.043251802564,
+            "event_macro_log_loss": 0.138550467231,
             "events_with_violations": 780,
             "monotonicity_violation_edges": 1949
           },
           "raw": {
-            "event_macro_brier": 0.048286960795454546,
-            "event_macro_log_loss": 0.16770082006472242,
+            "event_macro_brier": 0.048286960795,
+            "event_macro_log_loss": 0.167700820065,
             "events_with_violations": 780,
             "monotonicity_violation_edges": 1949
           }
@@ -260,105 +264,105 @@
       "1800": {
         "asset_subgroups": {
           "Bitcoin": {
-            "brier_delta": 0.02272546044313975,
+            "brier_delta": 0.022725460443,
             "events": 299
           },
           "Ethereum": {
-            "brier_delta": 0.023989428929761566,
+            "brier_delta": 0.02398942893,
             "events": 298
           }
         },
         "comparisons": {
           "beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.006392147565360676,
+            "brier_delta": 0.006392147565,
             "brier_delta_ci": [
-              0.005442092756707658,
-              0.007297273041850984
+              0.005442092757,
+              0.007297273042
             ],
-            "log_loss_delta": 0.015694231805881587,
+            "log_loss_delta": 0.015694231806,
             "log_loss_delta_ci": [
-              0.007958895180643563,
-              0.022678497969178486
+              0.007958895181,
+              0.022678497969
             ],
             "model": "beta",
-            "relative_brier_improvement": 0.0744409211514798
+            "relative_brier_improvement": 0.074440921151
           },
           "pav_beta_vs_beta": {
             "baseline": "beta",
-            "brier_delta": 0.025394843168024213,
+            "brier_delta": 0.025394843168,
             "brier_delta_ci": [
-              0.022836833666104877,
-              0.028228500006858302
+              0.022836833666,
+              0.028228500007
             ],
-            "log_loss_delta": 0.036496070624318006,
+            "log_loss_delta": 0.036496070624,
             "log_loss_delta_ci": [
-              0.028170556927106974,
-              0.04604144430563664
+              0.028170556927,
+              0.046041444306
             ],
             "model": "pav_beta",
-            "relative_brier_improvement": 0.3195260981995328
+            "relative_brier_improvement": 0.3195260982
           },
           "pav_beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.03178699073338489,
+            "brier_delta": 0.031786990733,
             "brier_delta_ci": [
-              0.029200403930091306,
-              0.03462341995753341
+              0.02920040393,
+              0.034623419958
             ],
-            "log_loss_delta": 0.05219030243019959,
+            "log_loss_delta": 0.05219030243,
             "log_loss_delta_ci": [
-              0.04392250798225715,
-              0.059986273781432085
+              0.043922507982,
+              0.059986273781
             ],
             "model": "pav_beta",
-            "relative_brier_improvement": 0.37018120226910123
+            "relative_brier_improvement": 0.370181202269
           },
           "pav_raw_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.02335638608637812,
+            "brier_delta": 0.023356386086,
             "brier_delta_ci": [
-              0.02137460294255668,
-              0.025586094573076142
+              0.021374602943,
+              0.025586094573
             ],
-            "log_loss_delta": 0.026605888292345642,
+            "log_loss_delta": 0.026605888292,
             "log_loss_delta_ci": [
-              0.02310784660245232,
-              0.03051465752186168
+              0.023107846602,
+              0.030514657522
             ],
             "model": "pav_raw",
-            "relative_brier_improvement": 0.2720010571191325
+            "relative_brier_improvement": 0.272001057119
           }
         },
         "events": 597,
         "methods": {
           "beta": {
-            "event_macro_brier": 0.07947658520264603,
-            "event_macro_log_loss": 0.2458472454523049,
+            "event_macro_brier": 0.079476585203,
+            "event_macro_log_loss": 0.245847245452,
             "events_with_violations": 587,
             "monotonicity_violation_edges": 1596
           },
           "pav_beta": {
-            "event_macro_brier": 0.054081742034621814,
-            "event_macro_log_loss": 0.2093511748279869,
+            "event_macro_brier": 0.054081742035,
+            "event_macro_log_loss": 0.209351174828,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "pav_raw": {
-            "event_macro_brier": 0.06251234668162858,
-            "event_macro_log_loss": 0.23493558896584085,
+            "event_macro_brier": 0.062512346682,
+            "event_macro_log_loss": 0.234935588966,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "platt": {
-            "event_macro_brier": 0.07690185650289451,
-            "event_macro_log_loss": 0.24159112895245996,
+            "event_macro_brier": 0.076901856503,
+            "event_macro_log_loss": 0.241591128952,
             "events_with_violations": 587,
             "monotonicity_violation_edges": 1596
           },
           "raw": {
-            "event_macro_brier": 0.0858687327680067,
-            "event_macro_log_loss": 0.2615414772581865,
+            "event_macro_brier": 0.085868732768,
+            "event_macro_log_loss": 0.261541477258,
             "events_with_violations": 587,
             "monotonicity_violation_edges": 1596
           }
@@ -369,105 +373,105 @@
       "900": {
         "asset_subgroups": {
           "Bitcoin": {
-            "brier_delta": 0.021318617836262807,
+            "brier_delta": 0.021318617836,
             "events": 299
           },
           "Ethereum": {
-            "brier_delta": 0.02186017225969418,
+            "brier_delta": 0.02186017226,
             "events": 299
           }
         },
         "comparisons": {
           "beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": -0.005291465948642576,
+            "brier_delta": -0.005291465949,
             "brier_delta_ci": [
-              -0.006757692224309278,
-              -0.003805081162005001
+              -0.006757692224,
+              -0.003805081162
             ],
-            "log_loss_delta": -0.0014334314843661433,
+            "log_loss_delta": -0.001433431484,
             "log_loss_delta_ci": [
-              -0.006059284611142603,
-              0.0032057980180617294
+              -0.006059284611,
+              0.003205798018
             ],
             "model": "beta",
-            "relative_brier_improvement": -0.07222272418900674
+            "relative_brier_improvement": -0.072222724189
           },
           "pav_beta_vs_beta": {
             "baseline": "beta",
-            "brier_delta": 0.027015930018524897,
+            "brier_delta": 0.027015930019,
             "brier_delta_ci": [
-              0.024292331083778294,
-              0.029950453259925063
+              0.024292331084,
+              0.02995045326
             ],
-            "log_loss_delta": 0.034535927154786816,
+            "log_loss_delta": 0.034535927155,
             "log_loss_delta_ci": [
-              0.029072061184269263,
-              0.040383793245726156
+              0.029072061184,
+              0.040383793246
             ],
             "model": "pav_beta",
-            "relative_brier_improvement": 0.3439004747586428
+            "relative_brier_improvement": 0.343900474759
           },
           "pav_beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.02172446406988232,
+            "brier_delta": 0.02172446407,
             "brier_delta_ci": [
-              0.018657377458769324,
-              0.024907945644613023
+              0.018657377459,
+              0.024907945645
             ],
-            "log_loss_delta": 0.03310249567042067,
+            "log_loss_delta": 0.03310249567,
             "log_loss_delta_ci": [
-              0.02710174777966296,
-              0.038978206426308996
+              0.02710174778,
+              0.038978206426
             ],
             "model": "pav_beta",
-            "relative_brier_improvement": 0.296515179706598
+            "relative_brier_improvement": 0.296515179707
           },
           "pav_raw_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.021589395047978494,
+            "brier_delta": 0.021589395048,
             "brier_delta_ci": [
-              0.019372957978582368,
-              0.0241184147199381
+              0.019372957979,
+              0.02411841472
             ],
-            "log_loss_delta": 0.02351168382341204,
+            "log_loss_delta": 0.023511683823,
             "log_loss_delta_ci": [
-              0.02053117220829865,
-              0.02669980470284174
+              0.020531172208,
+              0.026699804703
             ],
             "model": "pav_raw",
-            "relative_brier_improvement": 0.29467163525027557
+            "relative_brier_improvement": 0.29467163525
           }
         },
         "events": 598,
         "methods": {
           "beta": {
-            "event_macro_brier": 0.07855740832426966,
-            "event_macro_log_loss": 0.22444104583807345,
+            "event_macro_brier": 0.078557408324,
+            "event_macro_log_loss": 0.224441045838,
             "events_with_violations": 587,
             "monotonicity_violation_edges": 1534
           },
           "pav_beta": {
-            "event_macro_brier": 0.051541478305744765,
-            "event_macro_log_loss": 0.18990511868328663,
+            "event_macro_brier": 0.051541478306,
+            "event_macro_log_loss": 0.189905118683,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "pav_raw": {
-            "event_macro_brier": 0.05167654732764859,
-            "event_macro_log_loss": 0.19949593053029527,
+            "event_macro_brier": 0.051676547328,
+            "event_macro_log_loss": 0.19949593053,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "platt": {
-            "event_macro_brier": 0.07752980447602643,
-            "event_macro_log_loss": 0.22267846107037967,
+            "event_macro_brier": 0.077529804476,
+            "event_macro_log_loss": 0.22267846107,
             "events_with_violations": 587,
             "monotonicity_violation_edges": 1534
           },
           "raw": {
-            "event_macro_brier": 0.07326594237562709,
-            "event_macro_log_loss": 0.2230076143537073,
+            "event_macro_brier": 0.073265942376,
+            "event_macro_log_loss": 0.223007614354,
             "events_with_violations": 587,
             "monotonicity_violation_edges": 1534
           }
@@ -480,73 +484,73 @@
       "1800": {
         "asset_subgroups": {
           "Bitcoin": {
-            "brier_delta": 0.0130352148462149,
+            "brier_delta": 0.013035214846,
             "events": 216
           },
           "Ethereum": {
-            "brier_delta": 0.0136657955735221,
+            "brier_delta": 0.013665795574,
             "events": 216
           }
         },
         "comparisons": {
           "beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.005565011000166396,
-            "log_loss_delta": 0.010990486909403185,
+            "brier_delta": 0.005565011,
+            "log_loss_delta": 0.010990486909,
             "model": "beta",
-            "relative_brier_improvement": 0.09322426668774383
+            "relative_brier_improvement": 0.093224266688
           },
           "pav_beta_vs_beta": {
             "baseline": "beta",
-            "brier_delta": 0.013764686665792156,
-            "log_loss_delta": 0.035897213432854236,
+            "brier_delta": 0.013764686666,
+            "log_loss_delta": 0.035897213433,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.25429006288497874
+            "relative_brier_improvement": 0.254290062885
           },
           "pav_beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.019329697665958552,
-            "log_loss_delta": 0.04688770034225742,
+            "brier_delta": 0.019329697666,
+            "log_loss_delta": 0.046887700342,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.3238083249342902
+            "relative_brier_improvement": 0.323808324934
           },
           "pav_raw_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.013350505209868496,
-            "log_loss_delta": 0.018910040214144497,
+            "brier_delta": 0.01335050521,
+            "log_loss_delta": 0.018910040214,
             "model": "pav_raw",
-            "relative_brier_improvement": 0.22364574985811894
+            "relative_brier_improvement": 0.223645749858
           }
         },
         "events": 432,
         "methods": {
           "beta": {
-            "event_macro_brier": 0.05412986457130352,
-            "event_macro_log_loss": 0.1882430939390414,
+            "event_macro_brier": 0.054129864571,
+            "event_macro_log_loss": 0.188243093939,
             "events_with_violations": 427,
             "monotonicity_violation_edges": 1127
           },
           "pav_beta": {
-            "event_macro_brier": 0.04036517790551136,
-            "event_macro_log_loss": 0.15234588050618716,
+            "event_macro_brier": 0.040365177906,
+            "event_macro_log_loss": 0.152345880506,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "pav_raw": {
-            "event_macro_brier": 0.04634437036160142,
-            "event_macro_log_loss": 0.1803235406343001,
+            "event_macro_brier": 0.046344370362,
+            "event_macro_log_loss": 0.180323540634,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "platt": {
-            "event_macro_brier": 0.05269808423884236,
-            "event_macro_log_loss": 0.1862312055577665,
+            "event_macro_brier": 0.052698084239,
+            "event_macro_log_loss": 0.186231205558,
             "events_with_violations": 427,
             "monotonicity_violation_edges": 1127
           },
           "raw": {
-            "event_macro_brier": 0.059694875571469914,
-            "event_macro_log_loss": 0.19923358084844459,
+            "event_macro_brier": 0.059694875571,
+            "event_macro_log_loss": 0.199233580848,
             "events_with_violations": 427,
             "monotonicity_violation_edges": 1127
           }
@@ -557,73 +561,73 @@
       "900": {
         "asset_subgroups": {
           "Bitcoin": {
-            "brier_delta": 0.012613819138298211,
+            "brier_delta": 0.012613819138,
             "events": 222
           },
           "Ethereum": {
-            "brier_delta": 0.012852156542176169,
+            "brier_delta": 0.012852156542,
             "events": 221
           }
         },
         "comparisons": {
           "beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": -0.0026391130535079604,
-            "log_loss_delta": 0.0054825493953736815,
+            "brier_delta": -0.002639113054,
+            "log_loss_delta": 0.005482549395,
             "model": "beta",
-            "relative_brier_improvement": -0.049534416618883644
+            "relative_brier_improvement": -0.049534416619
           },
           "pav_beta_vs_beta": {
             "baseline": "beta",
-            "brier_delta": 0.015358300121644804,
-            "log_loss_delta": 0.0217851909442687,
+            "brier_delta": 0.015358300122,
+            "log_loss_delta": 0.021785190944,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.2746600679280968
+            "relative_brier_improvement": 0.274660067928
           },
           "pav_beta_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.012719187068136843,
-            "log_loss_delta": 0.027267740339642382,
+            "brier_delta": 0.012719187068,
+            "log_loss_delta": 0.02726774034,
             "model": "pav_beta",
-            "relative_brier_improvement": 0.23873077754253438
+            "relative_brier_improvement": 0.238730777543
           },
           "pav_raw_vs_raw": {
             "baseline": "raw",
-            "brier_delta": 0.012732718836395332,
-            "log_loss_delta": 0.014297920112083168,
+            "brier_delta": 0.012732718836,
+            "log_loss_delta": 0.014297920112,
             "model": "pav_raw",
-            "relative_brier_improvement": 0.23898475993469268
+            "relative_brier_improvement": 0.238984759935
           }
         },
         "events": 443,
         "methods": {
           "beta": {
-            "event_macro_brier": 0.05591748461107004,
-            "event_macro_log_loss": 0.1711959431972752,
+            "event_macro_brier": 0.055917484611,
+            "event_macro_log_loss": 0.171195943197,
             "events_with_violations": 439,
             "monotonicity_violation_edges": 1142
           },
           "pav_beta": {
-            "event_macro_brier": 0.040559184489425235,
-            "event_macro_log_loss": 0.1494107522530065,
+            "event_macro_brier": 0.040559184489,
+            "event_macro_log_loss": 0.149410752253,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "pav_raw": {
-            "event_macro_brier": 0.040545652721166746,
-            "event_macro_log_loss": 0.16238057248056573,
+            "event_macro_brier": 0.040545652721,
+            "event_macro_log_loss": 0.162380572481,
             "events_with_violations": 0,
             "monotonicity_violation_edges": 0
           },
           "platt": {
-            "event_macro_brier": 0.055263271349344396,
-            "event_macro_log_loss": 0.17059540572053256,
+            "event_macro_brier": 0.055263271349,
+            "event_macro_log_loss": 0.170595405721,
             "events_with_violations": 439,
             "monotonicity_violation_edges": 1142
           },
           "raw": {
-            "event_macro_brier": 0.05327837155756208,
-            "event_macro_log_loss": 0.1766784925926489,
+            "event_macro_brier": 0.053278371558,
+            "event_macro_log_loss": 0.176678492593,
             "events_with_violations": 439,
             "monotonicity_violation_edges": 1142
           }

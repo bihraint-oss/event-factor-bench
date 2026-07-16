@@ -58,3 +58,13 @@ def test_snapshot_parser_rejects_false_label_provenance(
 
     with pytest.raises(ValueError, match=message):
         snapshot._parse_row(row, 2)
+
+
+def test_result_numbers_are_quantized_for_cross_platform_json() -> None:
+    value = {"positive": 0.12345678901249, "negative_zero": -1e-15, "integer": 3}
+
+    assert snapshot._quantize_numbers(value) == {
+        "positive": 0.123456789012,
+        "negative_zero": 0.0,
+        "integer": 3,
+    }

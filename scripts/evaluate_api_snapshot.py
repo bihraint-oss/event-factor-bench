@@ -34,6 +34,7 @@ DEFAULT_PROTOCOL = PROJECT_ROOT / "configs/protocol_v0.1.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / "results/gamma_snapshot_v0.2/results.json"
 LABEL_SOURCE = "gamma_terminal_outcome_prices_candidate"
 SNAPSHOT_VERSION = "0.2.0"
+NUMERIC_DECIMAL_PLACES = 12
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX32_RE = re.compile(r"^0x[0-9a-f]{64}$")
@@ -111,6 +112,21 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"duplicate JSON object key {key!r}")
         result[key] = value
     return result
+
+
+def _quantize_numbers(value: Any) -> Any:
+    """Canonicalize floating-point output across NumPy/BLAS platforms."""
+
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("result contains a non-finite number")
+        rounded = round(value, NUMERIC_DECIMAL_PLACES)
+        return 0.0 if rounded == 0.0 else rounded
+    if isinstance(value, list):
+        return [_quantize_numbers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _quantize_numbers(item) for key, item in value.items()}
+    return value
 
 
 def _parse_utc(value: str, name: str) -> datetime:
@@ -482,9 +498,13 @@ def evaluate_snapshot(
         == 0,
     }
 
-    return {
+    result = {
         "benchmark": "EventFactorBench",
         "release_version": SNAPSHOT_VERSION,
+        "numeric_serialization": {
+            "decimal_places": NUMERIC_DECIMAL_PLACES,
+            "purpose": "cross-platform deterministic JSON",
+        },
         "protocol_version": protocol["version"],
         "run_source_commit": provenance["source_commit"],
         "scope": "retrospective descriptive benchmark",
@@ -520,6 +540,7 @@ def evaluate_snapshot(
             "confirmatory_frozen_protocol_claim": False,
         },
     }
+    return _quantize_numbers(result)
 
 
 def parse_args() -> argparse.Namespace:
