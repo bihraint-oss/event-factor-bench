@@ -1,135 +1,143 @@
-# Benchmark card
+# EventFactorBench v0.2 benchmark card
 
-## Task
+## Purpose
 
-Repair cross-contract incoherence in hourly BTC/ETH “above threshold” probability curves,
-then measure predictive quality on a frozen chronological holdout.
+EventFactorBench evaluates whether a label-free shape constraint improves retrospective
+probability quality on hourly Bitcoin and Ethereum threshold ladders from Polymarket. It is an
+offline benchmark for factor research and calibration infrastructure, not a trading system.
 
-## Unit and weighting
+## Public snapshot
 
-- Row: one threshold contract at one forecast horizon.
-- Event: the complete threshold ladder for one asset and scheduled UTC hour.
-- Primary estimand: mean within-event Brier loss, then equal weight across events.
-- Uncertainty: paired hierarchical resampling of UTC days and events within days.
+- 67,156 normalized forecast rows.
+- 1,877 events and 33,784 distinct markets/conditions.
+- 3,731 event × horizon curves.
+- 43 UTC calendar days from 2026-06-01 through 2026-07-13.
+- Bitcoin and Ethereum “above threshold” ladders with at least eight contracts.
+- Forecast references at 30-minute and 15-minute cutoffs.
+- Maximum accepted point-in-time staleness: 120 seconds.
 
-This prevents a 20-strike BTC ladder from counting as 20 independent forecasts or receiving
-more weight than a smaller ETH ladder.
+The snapshot is [`data/gamma_snapshot_v0.2.csv.gz`](data/gamma_snapshot_v0.2.csv.gz). Its exact
+compressed SHA-256 is
+`0e0af86d8f87cb55c0a77337439b6ede95bc3440c86735faf4f689b49ad5202a`; the decompressed content
+SHA-256 is `e703dff2a94f60ef3e6bd8d94240375a20f0a0a320c95e9f4adafc452e5e9c87`.
 
-## Data source
+## Label semantics
 
-- Event and resolution metadata: public Gamma `events/keyset` API.
-- Historical reference probability: public CLOB `batch-prices-history` API.
-- Canonical binary outcome: Polygon ConditionalTokens `ConditionResolution` logs.
-- Raw response bytes and detailed selection exclusions are retained in the local audit snapshot.
-  The public evidence release contains request parameters, archive timestamps, SHA-256 hashes,
-  aggregate coverage, on-chain exclusions, and the minimal normalized rows needed to recompute
-  the result. The local auditor replays normalization exactly; third-party raw responses and
-  free-text selection records are not relicensed as an API mirror.
+The evaluation label is derived retrospectively from a strict terminal Polymarket Gamma
+`outcomePrices` vector:
 
-The benchmark uses only hourly events (daily ladders are excluded to avoid duplicate economic
-cells) whose nested markets are binary Yes/No, order-book enabled, and marked
-`umaResolutionStatus == resolved`. Gamma's final outcome is retained only as a candidate
-cross-check. The canonical label is the Polygon ConditionalTokens `ConditionResolution`
-payout vector; only unambiguous `[1, 0]` or `[0, 1]` vectors are accepted.
+- `[1, 0]` maps to Yes / 1;
+- `[0, 1]` maps to No / 0;
+- every other vector is excluded by the collector.
+
+Every public row states:
+
+```text
+gamma_candidate_label_source=gamma_terminal_outcome_prices_candidate
+gamma_candidate_label_onchain_verified=False
+```
+
+These labels were not independently verified against Polygon ConditionalTokens payouts. The
+v0.2 release therefore supports retrospective descriptive comparisons only. It is not the
+confirmatory on-chain run originally designed under the historical v0.1 protocol tags.
+
+## Features and leakage controls
+
+The reference feature is the last eligible CLOB Yes probability at or before the forecast
+cutoff. The evaluator rejects:
+
+- a source timestamp after the cutoff;
+- reported staleness inconsistent with the timestamps;
+- staleness above 120 seconds;
+- a cutoff inconsistent with scheduled time minus horizon;
+- rows outside their chronological split;
+- duplicate market × horizon rows;
+- event ladders that differ across horizons;
+- non-binary, inconsistent, or non-monotone terminal labels.
+
+PAV projection reads thresholds and forecast probabilities only. It does not read any label.
+Platt and beta calibration fit only on the development split.
 
 ## Splits
 
-- Development: 2026-06-01 through 2026-06-19 UTC.
-- Validation: 2026-06-20 through 2026-06-29 UTC.
-- Holdout: 2026-06-30 through 2026-07-13 UTC (14 complete UTC days).
+| Split | UTC interval | Role |
+|---|---|---|
+| Development | 2026-06-01 00:00 through 2026-06-19 23:59 | fit Platt/Beta |
+| Validation | 2026-06-20 00:00 through 2026-06-29 23:59 | diagnostics |
+| Holdout | 2026-06-30 00:00 through 2026-07-13 23:59 | reported comparison |
 
-Split membership follows the scheduled event timestamp. All contracts in an event remain in
-the same split.
+The primary 30-minute holdout contains 10,748 rows from 597 events across all 14 UTC days.
+Event coverage is 597/619 (96.446%); row coverage is 10,748/11,140 (96.481%).
 
-## Development-only operational precommit
+## Methods
 
-Before the public v0.1 protocol tag, the lowest and highest threshold from each of 884 strict
-development events were checked against Polygon. All 1,768 conditions had one accepted binary
-payout agreeing with Gamma; the maximum scheduled-to-resolution latency was 39,472 seconds.
-Because 805 events resolved their two extremes at different block timestamps, the formal run
-checks every condition rather than inheriting one event-level label. The protocol fixes an
-18-hour resolution window, leaving 25,328 seconds of margin over the observed development
-maximum.
+- `raw`: point-in-time CLOB Yes reference probability.
+- `pav_raw`: raw probability followed by unweighted non-increasing PAV within each ladder.
+- `platt`: event-balanced Platt calibration trained on development.
+- `beta`: event-balanced beta calibration trained on development.
+- `pav_beta`: beta calibration followed by the same label-free PAV projection.
 
-The development history replay also found 93.33% 30-minute event coverage under the 120-second
-freshness rule. Relaxing the cap to 180, 240, or 300 seconds recovered no events; 600 seconds
-recovered only two and still remained below 95%. The 120-second rule and 95% holdout claim gate
-were therefore retained. Validation and holdout data were not used for either decision. See
-[`audits/development_precommit_v0.1.json`](audits/development_precommit_v0.1.json).
+## Metrics and inference
 
-## Formal-freeze lineage
+- Primary: holdout event-macro Brier loss at 30 minutes.
+- Secondary: event-macro log loss and 15-minute metrics.
+- Weighting: equal weight per event, not per contract row.
+- Interval: paired hierarchical percentile bootstrap.
+- Dependence block: UTC calendar day, then event within sampled days.
+- Resamples: 10,000.
+- Confidence: 95%.
+- Seed: 260715.
 
-The v0.1 collector completed, but its Polygon label-freeze did not publish evidence. Archived
-stderr records three completed fail-closed invocations with two transport signatures: one
-`eth_getLogs` connection close and two `eth_getBlockByNumber` TLS EOF failures. It also contains
-one terminated `make` record (`143`) without a chain-verifier diagnostic. No per-invocation
-timestamps are available, so none are inferred.
+## v0.2 result
 
-No frozen evidence, evidence tag, result, evaluator output, or score was produced. Operational
-holdout coverage from the collector manifest was visible before the successor—597/619 events
-and 10,748/11,140 rows at 30 minutes—but no completed frozen-label set or scoring metrics were
-available. See
-[`audits/formal_freeze_failures_v0.1.json`](audits/formal_freeze_failures_v0.1.json) for the log
-hashes and exact records.
+At 30 minutes, `pav_raw` changed event-macro Brier loss from 0.08586873 to 0.06251235, a 27.2001%
+relative reduction. The paired 95% interval for the absolute reduction is
+[0.02137460, 0.02558609]. Bitcoin and Ethereum subgroup reductions are both positive, and PAV
+reduces 1,596 monotonicity-violation edges to zero.
 
-`protocol-v0.1.1` is a transport/evidence-only successor. The v0.1 statistical config, claim
-gate, splits, method, metrics, inference, and data/result filenames are unchanged. Because the
-old collector manifest is source-commit-bound, a full collector rerun at the successor tag is
-mandatory; its hashes, counts, and coverage must be compared with the failed-attempt collector
-before scoring. Every substantive delta requires an explanation in the public
-`data/collector_comparison_v0.1.1.json`; the chain manifest binds that report and CI verifies it
-independently. The comparison is provenance-only: it does not inspect or use a label field, open
-frozen on-chain evidence or results, or compute scores; its candidate parser uses only event IDs
-and horizons. The successor evidence commit is tagged `frozen-v0.1.1-run`.
+This result meets every numerical condition in the v0.2 statistical reporting screen. That
+screen is not the historical v0.1 canonical-chain claim gate.
 
-The amendment gives both collection and chain access a fixed ten-attempt HTTP transport budget.
-Collection publishes a completed local snapshot with one sibling-directory rename. Chain output
-uses staged files, caught-failure rollback, and a manifest-last commit marker. The public v2
-chain schema records canonical request parameters, request IDs and request/response hashes;
-local and public validators reject duplicate JSON keys, non-finite numbers, non-integer IDs, and
-provenance mismatches. Polygon JSON-RPC error retries use a separate five-attempt budget. None of
-these changes alters event selection, price selection, labels, splits, factors, metrics, or
-claim thresholds.
+## Reproducibility and provenance
 
-Formal scoring is available only through a guarded evidence-to-result transition. The annotated
-`frozen-v0.1.1-run` tag must be published by `origin`, point at the exact current commit, descend
-from the annotated protocol tag, contain the complete public evidence data tree, and contain no
-result artifacts. Protected code and evidence must be clean and the collector comparison must
-verify before `make score-frozen` computes metrics. The later result commit must retain the exact
-evidence data tree and commit `results.json`, deterministic CSV/SVG renderings, and `RESULTS.md`;
-`make verify-frozen` then recomputes and verifies them. Raw API/RPC bytes remain local audit
-material; public evidence carries their provenance hashes rather than redistributing them.
+The collector manifest is published as
+[`data/gamma_snapshot_manifest_v0.2.json`](data/gamma_snapshot_manifest_v0.2.json), SHA-256
+`0fc7a29f536a43e5ba4ab9f391cf121994ef23d30717a8665f4cf8f78594c1e1`. It binds:
 
-## Baseline and method
+- the protocol and source commit;
+- the public snapshot file and byte count;
+- pre-evaluation coverage by split and horizon;
+- 2,006 Gamma/CLOB request records;
+- successful-response content and gzip hashes;
+- the exact label caveat and HTTP retry policy.
 
-The baseline is the latest raw YES reference probability no later than the cutoff and no more
-than 120 seconds old. The primary method sorts contracts by numeric threshold and applies the
-unweighted pool-adjacent-violators projection so probabilities cannot increase at higher
-thresholds.
+Raw API response bytes remain local and are not redistributed. CI validates the public table and
+manifest, recomputes the complete benchmark, and compares all result artifacts byte-for-byte.
 
-This is a label-free, deterministic structural factor. Because the resolved threshold vector
-is itself non-increasing, Euclidean projection cannot increase within-event squared error;
-the benchmark tests whether the realized reduction is large and consistent enough to clear
-the predeclared practical and uncertainty gates.
+```bash
+uv sync --frozen --all-groups
+make verify-api-release
+```
 
-## Metrics
+## Intended uses
 
-- Primary: event-macro Brier loss and relative Brier reduction.
-- Secondary: clipped event-macro log loss, violation rate/count, coverage, staleness, and
-  asset-specific results.
+- research on threshold-ladder shape repair;
+- calibration and proper-scoring-rule experiments;
+- reproducible prediction-market data pipelines;
+- examples of event-balanced and dependence-aware benchmark design.
 
-## Leakage controls
+## Out-of-scope uses and claims
 
-- No selected price timestamp may exceed the forecast cutoff.
-- Post-resolution Gamma values are labels only, never model features.
-- Gamma candidate labels must agree with canonical on-chain payout vectors.
-- Event IDs cannot cross splits.
-- Duplicate timestamps with conflicting values fail closed.
-- Boundary-inclusive API pages are deduplicated by stable IDs and content hashed.
+- live trading decisions or financial advice;
+- P&L, alpha, Sharpe ratio, or execution-quality claims;
+- fills, fees, slippage, latency, liquidity, or market impact;
+- canonical-chain or dispute-resolution guarantees;
+- causal claims about future markets;
+- claims that a post-processor “beats Polymarket.”
 
-## Scope limits
+## Historical protocol note
 
-This is a retrospective forecasting benchmark, not a trading backtest. It does not reconstruct
-historical order books or claim executable returns. It covers a short, homogeneous CLOB V2
-regime and hourly crypto threshold ladders; it does not establish generalization to elections,
-sports, longer horizons, other venues, or future market regimes.
+The repository retains the annotated `protocol-v0.1` and `protocol-v0.1.1` tags and the optional
+Polygon verifier for audit history. No v0.2 metric or claim depends on that unfinished chain
+freeze. The change from chain-verified labels to Gamma snapshot labels is disclosed as a
+substantive scope change, which is why the public snapshot release is versioned v0.2.0.

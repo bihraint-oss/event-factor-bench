@@ -1,4 +1,4 @@
-.PHONY: sync test lint check build assert-published-protocol assert-frozen-checkout assert-frozen-source assert-protocol-code assert-score-ready assert-frozen-evidence collect compare-collectors freeze-labels audit-local-snapshot verify-collector-comparison verify-evidence score-frozen render-results verify-frozen
+.PHONY: sync test lint check build assert-published-protocol assert-frozen-checkout assert-frozen-source assert-protocol-code assert-score-ready assert-frozen-evidence collect compare-collectors freeze-labels audit-local-snapshot verify-collector-comparison verify-evidence score-frozen render-results verify-frozen verify-api-snapshot score-api-snapshot render-api-snapshot verify-api-release
 
 sync:
 	uv sync --frozen --all-groups
@@ -105,3 +105,17 @@ render-results:
 verify-frozen: assert-protocol-code assert-frozen-evidence verify-collector-comparison
 	uv run python scripts/evaluate_frozen.py --verify results/frozen_v0.1/results.json
 	uv run python scripts/render_results.py --verify
+
+verify-api-snapshot:
+	uv run python scripts/evaluate_api_snapshot.py --validate-only
+
+score-api-snapshot: verify-api-snapshot
+	uv run python scripts/evaluate_api_snapshot.py
+
+render-api-snapshot:
+	uv run python scripts/render_results.py --input results/gamma_snapshot_v0.2/results.json --output-dir results/gamma_snapshot_v0.2 --results-markdown RESULTS.md
+
+verify-api-release: verify-api-snapshot
+	shasum -a 256 -c SHA256SUMS
+	uv run python scripts/evaluate_api_snapshot.py --verify
+	uv run python scripts/render_results.py --input results/gamma_snapshot_v0.2/results.json --output-dir results/gamma_snapshot_v0.2 --results-markdown RESULTS.md --verify

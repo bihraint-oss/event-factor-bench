@@ -32,7 +32,9 @@ def render(result: dict[str, Any], output_dir: Path, results_markdown: Path) -> 
     horizons = sorted(map(int, holdout), reverse=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "holdout_metrics.csv").write_text(_metrics_csv(holdout, horizons))
-    (output_dir / "holdout_brier.svg").write_text(_brier_svg(holdout, horizons), encoding="utf-8")
+    (output_dir / "holdout_brier.svg").write_text(
+        _brier_svg(holdout, horizons, _chart_subtitle(result)), encoding="utf-8"
+    )
     results_markdown.write_text(_markdown(result, horizons), encoding="utf-8")
 
 
@@ -43,7 +45,7 @@ def verify(result: dict[str, Any], output_dir: Path, results_markdown: Path) -> 
     horizons = sorted(map(int, holdout), reverse=True)
     expected = {
         output_dir / "holdout_metrics.csv": _metrics_csv(holdout, horizons),
-        output_dir / "holdout_brier.svg": _brier_svg(holdout, horizons),
+        output_dir / "holdout_brier.svg": _brier_svg(holdout, horizons, _chart_subtitle(result)),
         results_markdown: _markdown(result, horizons),
     }
     for path, content in expected.items():
@@ -77,6 +79,12 @@ def _metrics_csv(holdout: dict[str, Any], horizons: list[int]) -> str:
 
 
 def _markdown(result: dict[str, Any], horizons: list[int]) -> str:
+    if "label_provenance" in result:
+        return _snapshot_markdown(result, horizons)
+    return _frozen_markdown(result, horizons)
+
+
+def _frozen_markdown(result: dict[str, Any], horizons: list[int]) -> str:
     holdout = result["splits"]["holdout"]
     gate = result["claim_gate"]
     primary = holdout[str(horizons[0])]
@@ -171,7 +179,112 @@ def _markdown(result: dict[str, Any], horizons: list[int]) -> str:
     return "\n".join(lines)
 
 
-def _brier_svg(holdout: dict[str, Any], horizons: list[int]) -> str:
+def _snapshot_markdown(result: dict[str, Any], horizons: list[int]) -> str:
+    holdout = result["splits"]["holdout"]
+    screen = result["reporting_screen"]
+    primary = holdout[str(horizons[0])]
+    comparison = primary["comparisons"]["pav_raw_vs_raw"]
+    evidence = result["evidence"]
+    provenance = result["label_provenance"]
+    passed = bool(screen["statistical_screen_passed"])
+    lines = [
+        "# Gamma snapshot v0.2 results",
+        "",
+        f"**Statistical reporting screen: {'MET' if passed else 'NOT MET'}.**",
+        "",
+        (
+            f"At {horizons[0] // 60} minutes, label-free PAV reduced holdout "
+            f"event-macro Brier loss from {primary['methods']['raw']['event_macro_brier']:.8f} "
+            f"to {primary['methods']['pav_raw']['event_macro_brier']:.8f}, a "
+            f"{comparison['relative_brier_improvement'] * 100:.4f}% relative reduction. "
+            f"The paired 95% UTC-day/event bootstrap interval for the absolute reduction was "
+            f"[{comparison['brier_delta_ci'][0]:.8f}, "
+            f"{comparison['brier_delta_ci'][1]:.8f}]."
+        ),
+        "",
+        (
+            "**Label scope:** outcomes are retrospective terminal Polymarket Gamma "
+            "`outcomePrices` labels. They were not independently verified on Polygon, so this "
+            "release makes no canonical-chain claim."
+        ),
+        "",
+        "## Holdout metrics",
+        "",
+        "| Horizon | Method | Event-macro Brier | Event-macro log loss | Violation edges |",
+        "|---:|---|---:|---:|---:|",
+    ]
+    for horizon in horizons:
+        for method, label in METHOD_LABELS.items():
+            values = holdout[str(horizon)]["methods"][method]
+            lines.append(
+                f"| {horizon // 60} min | {label} | "
+                f"{values['event_macro_brier']:.8f} | "
+                f"{values['event_macro_log_loss']:.8f} | "
+                f"{values['monotonicity_violation_edges']:,} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Primary comparison and coverage",
+            "",
+            f"- Holdout events: {primary['events']:,} across {primary['utc_days']:,} UTC days.",
+            (
+                f"- Event coverage: {screen['coverage']['retained_events']:,}/"
+                f"{screen['coverage']['expected_events']:,} "
+                f"({screen['coverage']['event_coverage'] * 100:.3f}%)."
+            ),
+            (
+                f"- Contract-row coverage: {screen['coverage']['retained_rows']:,}/"
+                f"{screen['coverage']['expected_rows']:,} "
+                f"({screen['coverage']['row_coverage'] * 100:.3f}%)."
+            ),
+            f"- Raw-minus-PAV event-macro log-loss delta: {comparison['log_loss_delta']:.8f}.",
+            "",
+            "## Asset subgroups",
+            "",
+            "| Asset | Events | Absolute Brier reduction |",
+            "|---|---:|---:|",
+        ]
+    )
+    for asset, values in sorted(primary["asset_subgroups"].items()):
+        lines.append(f"| {asset} | {values['events']:,} | {values['brier_delta']:.8f} |")
+    lines.extend(["", "## Statistical reporting screen", ""])
+    for name, value in screen["conditions"].items():
+        lines.append(f"- {'PASS' if value else 'FAIL'} — `{name}`")
+    lines.extend(
+        [
+            "",
+            "## Snapshot provenance",
+            "",
+            f"- Release version: `{result['release_version']}`",
+            f"- Collector source commit: `{result['run_source_commit']}`",
+            f"- Rows / events / markets: {evidence['rows']:,} / {evidence['events']:,} / "
+            f"{evidence['markets']:,}",
+            f"- Data SHA-256: `{evidence['sha256']}`",
+            f"- Data content SHA-256: `{evidence['uncompressed_sha256']}`",
+            f"- Collector manifest SHA-256: `{evidence['manifest_sha256']}`",
+            f"- Protocol SHA-256: `{evidence['protocol_sha256']}`",
+            f"- Label source: `{provenance['source']}`",
+            f"- On-chain verified: `{str(provenance['onchain_verified']).lower()}`",
+            "- Raw API response bytes redistributed: `false` (hash provenance only).",
+            "",
+            "This is a retrospective probability-quality benchmark. It does not measure P&L, "
+            "tradable alpha, executable fills, latency, or order-book performance.",
+            "",
+            "![Holdout event-macro Brier loss](results/gamma_snapshot_v0.2/holdout_brier.svg)",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _chart_subtitle(result: dict[str, Any]) -> str:
+    if "label_provenance" in result:
+        return "Lower is better · event-balanced · Gamma API snapshot v0.2"
+    return "Lower is better · event-balanced · frozen v0.1"
+
+
+def _brier_svg(holdout: dict[str, Any], horizons: list[int], subtitle: str) -> str:
     methods = ("raw", "pav_raw", "beta", "pav_beta")
     values = [
         float(holdout[str(horizon)]["methods"][method]["event_macro_brier"])
@@ -196,7 +309,7 @@ def _brier_svg(holdout: dict[str, Any], horizons: list[int]) -> str:
         ),
         (
             '<text x="105" y="52" font-family="system-ui,sans-serif" font-size="13" '
-            'fill="#475569">Lower is better · event-balanced · frozen v0.1</text>'
+            f'fill="#475569">{html.escape(subtitle)}</text>'
         ),
     ]
     for tick in range(6):

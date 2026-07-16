@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "event-factor-bench"
-version = "0.1.1"
-description = "Leakage-audited mathematical core for event-balanced probability-factor benchmarks"
+version = "0.2.0"
+description = "Reproducible shape-constrained factor benchmark on Polymarket threshold ladders"
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"

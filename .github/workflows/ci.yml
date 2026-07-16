@@ -33,5 +33,8 @@ jobs:
       - name: Verify committed frozen result
         if: ${{ hashFiles('results/frozen_v0.1/results.json') != '' }}
         run: make verify-frozen
+      - name: Verify Gamma snapshot data and deterministic result
+        if: matrix.python-version == '3.13'
+        run: make verify-api-release
       - if: matrix.python-version == '3.13'
         run: uv build --no-sources

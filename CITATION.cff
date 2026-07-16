@@ -1,11 +1,11 @@
 cff-version: 1.2.0
-message: "If you use EventFactorBench, cite the frozen release and evidence-manifest hash."
+message: "If you use EventFactorBench, cite the v0.2 release and snapshot-manifest hash."
 title: "EventFactorBench: A leakage-audited, event-balanced benchmark for prediction-market probability factors"
 type: software
 authors:
   - name: "bihraint-oss"
-version: 0.1.1
-date-released: 2026-07-15
+version: 0.2.0
+date-released: 2026-07-16
 license: MIT
 repository-code: "https://github.com/bihraint-oss/event-factor-bench"
 url: "https://github.com/bihraint-oss/event-factor-bench"

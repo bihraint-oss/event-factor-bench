@@ -1,0 +1,640 @@
+{
+  "benchmark": "EventFactorBench",
+  "calibrators": {
+    "1800": {
+      "beta": {
+        "coefficients": [
+          1.834909783805,
+          2.484138378033
+        ],
+        "epsilon": 1e-06,
+        "intercept": -0.379694379569,
+        "iterations": 6,
+        "l2": 0.001,
+        "method": "beta",
+        "objective": 0.135546248218
+      },
+      "platt": {
+        "coefficients": [
+          2.219505698492
+        ],
+        "epsilon": 1e-06,
+        "intercept": 0.131300699742,
+        "iterations": 6,
+        "l2": 0.001,
+        "method": "platt",
+        "objective": 0.133441571629
+      }
+    },
+    "900": {
+      "beta": {
+        "coefficients": [
+          1.722551906221,
+          2.068074454968
+        ],
+        "epsilon": 1e-06,
+        "intercept": -0.417916948614,
+        "iterations": 6,
+        "l2": 0.001,
+        "method": "beta",
+        "objective": 0.142227706829
+      },
+      "platt": {
+        "coefficients": [
+          1.961560107403
+        ],
+        "epsilon": 1e-06,
+        "intercept": -0.156861675528,
+        "iterations": 6,
+        "l2": 0.001,
+        "method": "platt",
+        "objective": 0.140474295545
+      }
+    }
+  },
+  "evidence": {
+    "event_horizon_curves": 3731,
+    "events": 1877,
+    "manifest_path": "data/gamma_snapshot_manifest_v0.2.json",
+    "manifest_sha256": "0fc7a29f536a43e5ba4ab9f391cf121994ef23d30717a8665f4cf8f78594c1e1",
+    "markets": 33784,
+    "path": "data/gamma_snapshot_v0.2.csv.gz",
+    "protocol_sha256": "79877551a7fa2ff8b26f15fb9d70aeb27c9b111ce204c1ac9d9f1aac3fc86320",
+    "raw_response_bytes_redistributed": false,
+    "raw_response_records": 2006,
+    "rows": 67156,
+    "sha256": "0e0af86d8f87cb55c0a77337439b6ede95bc3440c86735faf4f689b49ad5202a",
+    "uncompressed_sha256": "e703dff2a94f60ef3e6bd8d94240375a20f0a0a320c95e9f4adafc452e5e9c87"
+  },
+  "label_provenance": {
+    "canonical_chain_claim_allowed": false,
+    "onchain_verified": false,
+    "semantics": "strict terminal Gamma outcomePrices [1,0] or [0,1]",
+    "source": "gamma_terminal_outcome_prices_candidate"
+  },
+  "numeric_serialization": {
+    "decimal_places": 12,
+    "purpose": "cross-platform deterministic JSON"
+  },
+  "protocol_version": "0.1.0",
+  "release_version": "0.2.0",
+  "reporting_screen": {
+    "conditions": {
+      "all_projection_violations_removed": true,
+      "brier_ci_lower_above_zero": true,
+      "log_loss_regression_within_limit": true,
+      "minimum_contract_coverage": true,
+      "minimum_event_coverage": true,
+      "minimum_holdout_events": true,
+      "minimum_holdout_utc_days": true,
+      "minimum_relative_brier_improvement": true,
+      "nonnegative_asset_subgroups": true
+    },
+    "confirmatory_frozen_protocol_claim": false,
+    "coverage": {
+      "event_coverage": 0.964458804523,
+      "expected_events": 619,
+      "expected_rows": 11140,
+      "retained_events": 597,
+      "retained_rows": 10748,
+      "row_coverage": 0.964811490126
+    },
+    "statistical_screen_passed": true
+  },
+  "run_source_commit": "0696ff267f4abc9167772c2336fe4c1d9413bf09",
+  "scope": "retrospective descriptive benchmark",
+  "splits": {
+    "development": {
+      "1800": {
+        "asset_subgroups": {
+          "Bitcoin": {
+            "brier_delta": 0.003239283678,
+            "events": 412
+          },
+          "Ethereum": {
+            "brier_delta": 0.002448199063,
+            "events": 413
+          }
+        },
+        "comparisons": {
+          "beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.012848492837,
+            "log_loss_delta": 0.054901399612,
+            "model": "beta",
+            "relative_brier_improvement": 0.275229210459
+          },
+          "pav_beta_vs_beta": {
+            "baseline": "beta",
+            "brier_delta": 0.002378800282,
+            "log_loss_delta": 0.008708724045,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.070307173262
+          },
+          "pav_beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.015227293119,
+            "log_loss_delta": 0.063610123657,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.326185795934
+          },
+          "pav_raw_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.002843261925,
+            "log_loss_delta": 0.004483964209,
+            "model": "pav_raw",
+            "relative_brier_improvement": 0.060905877805
+          }
+        },
+        "events": 825,
+        "methods": {
+          "beta": {
+            "event_macro_brier": 0.033834389462,
+            "event_macro_log_loss": 0.130777349476,
+            "events_with_violations": 770,
+            "monotonicity_violation_edges": 2028
+          },
+          "pav_beta": {
+            "event_macro_brier": 0.03145558918,
+            "event_macro_log_loss": 0.12206862543,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "pav_raw": {
+            "event_macro_brier": 0.043839620374,
+            "event_macro_log_loss": 0.181194784878,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "platt": {
+            "event_macro_brier": 0.033654820765,
+            "event_macro_log_loss": 0.130978502384,
+            "events_with_violations": 770,
+            "monotonicity_violation_edges": 2028
+          },
+          "raw": {
+            "event_macro_brier": 0.046682882299,
+            "event_macro_log_loss": 0.185678749087,
+            "events_with_violations": 770,
+            "monotonicity_violation_edges": 2028
+          }
+        },
+        "rows": 14848,
+        "utc_days": 19
+      },
+      "900": {
+        "asset_subgroups": {
+          "Bitcoin": {
+            "brier_delta": 0.003711156835,
+            "events": 417
+          },
+          "Ethereum": {
+            "brier_delta": 0.00334578168,
+            "events": 419
+          }
+        },
+        "comparisons": {
+          "beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.004971473833,
+            "log_loss_delta": 0.029095158894,
+            "model": "beta",
+            "relative_brier_improvement": 0.102956859391
+          },
+          "pav_beta_vs_beta": {
+            "baseline": "beta",
+            "brier_delta": 0.003697997755,
+            "log_loss_delta": 0.007130746395,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.085373569919
+          },
+          "pav_beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.008669471588,
+            "log_loss_delta": 0.036225905288,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.179540634677
+          },
+          "pav_raw_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.003528032206,
+            "log_loss_delta": 0.004463478054,
+            "model": "pav_raw",
+            "relative_brier_improvement": 0.073063869576
+          }
+        },
+        "events": 836,
+        "methods": {
+          "beta": {
+            "event_macro_brier": 0.043315486962,
+            "event_macro_log_loss": 0.138605661171,
+            "events_with_violations": 780,
+            "monotonicity_violation_edges": 1948
+          },
+          "pav_beta": {
+            "event_macro_brier": 0.039617489208,
+            "event_macro_log_loss": 0.131474914777,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "pav_raw": {
+            "event_macro_brier": 0.04475892859,
+            "event_macro_log_loss": 0.163237342011,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "platt": {
+            "event_macro_brier": 0.043251802564,
+            "event_macro_log_loss": 0.138550467231,
+            "events_with_violations": 780,
+            "monotonicity_violation_edges": 1949
+          },
+          "raw": {
+            "event_macro_brier": 0.048286960795,
+            "event_macro_log_loss": 0.167700820065,
+            "events_with_violations": 780,
+            "monotonicity_violation_edges": 1949
+          }
+        },
+        "rows": 15044,
+        "utc_days": 19
+      }
+    },
+    "holdout": {
+      "1800": {
+        "asset_subgroups": {
+          "Bitcoin": {
+            "brier_delta": 0.022725460443,
+            "events": 299
+          },
+          "Ethereum": {
+            "brier_delta": 0.02398942893,
+            "events": 298
+          }
+        },
+        "comparisons": {
+          "beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.006392147565,
+            "brier_delta_ci": [
+              0.005442092757,
+              0.007297273042
+            ],
+            "log_loss_delta": 0.015694231806,
+            "log_loss_delta_ci": [
+              0.007958895181,
+              0.022678497969
+            ],
+            "model": "beta",
+            "relative_brier_improvement": 0.074440921151
+          },
+          "pav_beta_vs_beta": {
+            "baseline": "beta",
+            "brier_delta": 0.025394843168,
+            "brier_delta_ci": [
+              0.022836833666,
+              0.028228500007
+            ],
+            "log_loss_delta": 0.036496070624,
+            "log_loss_delta_ci": [
+              0.028170556927,
+              0.046041444306
+            ],
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.3195260982
+          },
+          "pav_beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.031786990733,
+            "brier_delta_ci": [
+              0.02920040393,
+              0.034623419958
+            ],
+            "log_loss_delta": 0.05219030243,
+            "log_loss_delta_ci": [
+              0.043922507982,
+              0.059986273781
+            ],
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.370181202269
+          },
+          "pav_raw_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.023356386086,
+            "brier_delta_ci": [
+              0.021374602943,
+              0.025586094573
+            ],
+            "log_loss_delta": 0.026605888292,
+            "log_loss_delta_ci": [
+              0.023107846602,
+              0.030514657522
+            ],
+            "model": "pav_raw",
+            "relative_brier_improvement": 0.272001057119
+          }
+        },
+        "events": 597,
+        "methods": {
+          "beta": {
+            "event_macro_brier": 0.079476585203,
+            "event_macro_log_loss": 0.245847245452,
+            "events_with_violations": 587,
+            "monotonicity_violation_edges": 1596
+          },
+          "pav_beta": {
+            "event_macro_brier": 0.054081742035,
+            "event_macro_log_loss": 0.209351174828,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "pav_raw": {
+            "event_macro_brier": 0.062512346682,
+            "event_macro_log_loss": 0.234935588966,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "platt": {
+            "event_macro_brier": 0.076901856503,
+            "event_macro_log_loss": 0.241591128952,
+            "events_with_violations": 587,
+            "monotonicity_violation_edges": 1596
+          },
+          "raw": {
+            "event_macro_brier": 0.085868732768,
+            "event_macro_log_loss": 0.261541477258,
+            "events_with_violations": 587,
+            "monotonicity_violation_edges": 1596
+          }
+        },
+        "rows": 10748,
+        "utc_days": 14
+      },
+      "900": {
+        "asset_subgroups": {
+          "Bitcoin": {
+            "brier_delta": 0.021318617836,
+            "events": 299
+          },
+          "Ethereum": {
+            "brier_delta": 0.02186017226,
+            "events": 299
+          }
+        },
+        "comparisons": {
+          "beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": -0.005291465949,
+            "brier_delta_ci": [
+              -0.006757692224,
+              -0.003805081162
+            ],
+            "log_loss_delta": -0.001433431484,
+            "log_loss_delta_ci": [
+              -0.006059284611,
+              0.003205798018
+            ],
+            "model": "beta",
+            "relative_brier_improvement": -0.072222724189
+          },
+          "pav_beta_vs_beta": {
+            "baseline": "beta",
+            "brier_delta": 0.027015930019,
+            "brier_delta_ci": [
+              0.024292331084,
+              0.02995045326
+            ],
+            "log_loss_delta": 0.034535927155,
+            "log_loss_delta_ci": [
+              0.029072061184,
+              0.040383793246
+            ],
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.343900474759
+          },
+          "pav_beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.02172446407,
+            "brier_delta_ci": [
+              0.018657377459,
+              0.024907945645
+            ],
+            "log_loss_delta": 0.03310249567,
+            "log_loss_delta_ci": [
+              0.02710174778,
+              0.038978206426
+            ],
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.296515179707
+          },
+          "pav_raw_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.021589395048,
+            "brier_delta_ci": [
+              0.019372957979,
+              0.02411841472
+            ],
+            "log_loss_delta": 0.023511683823,
+            "log_loss_delta_ci": [
+              0.020531172208,
+              0.026699804703
+            ],
+            "model": "pav_raw",
+            "relative_brier_improvement": 0.29467163525
+          }
+        },
+        "events": 598,
+        "methods": {
+          "beta": {
+            "event_macro_brier": 0.078557408324,
+            "event_macro_log_loss": 0.224441045838,
+            "events_with_violations": 587,
+            "monotonicity_violation_edges": 1534
+          },
+          "pav_beta": {
+            "event_macro_brier": 0.051541478306,
+            "event_macro_log_loss": 0.189905118683,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "pav_raw": {
+            "event_macro_brier": 0.051676547328,
+            "event_macro_log_loss": 0.19949593053,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "platt": {
+            "event_macro_brier": 0.077529804476,
+            "event_macro_log_loss": 0.22267846107,
+            "events_with_violations": 587,
+            "monotonicity_violation_edges": 1534
+          },
+          "raw": {
+            "event_macro_brier": 0.073265942376,
+            "event_macro_log_loss": 0.223007614354,
+            "events_with_violations": 587,
+            "monotonicity_violation_edges": 1534
+          }
+        },
+        "rows": 10764,
+        "utc_days": 14
+      }
+    },
+    "validation": {
+      "1800": {
+        "asset_subgroups": {
+          "Bitcoin": {
+            "brier_delta": 0.013035214846,
+            "events": 216
+          },
+          "Ethereum": {
+            "brier_delta": 0.013665795574,
+            "events": 216
+          }
+        },
+        "comparisons": {
+          "beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.005565011,
+            "log_loss_delta": 0.010990486909,
+            "model": "beta",
+            "relative_brier_improvement": 0.093224266688
+          },
+          "pav_beta_vs_beta": {
+            "baseline": "beta",
+            "brier_delta": 0.013764686666,
+            "log_loss_delta": 0.035897213433,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.254290062885
+          },
+          "pav_beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.019329697666,
+            "log_loss_delta": 0.046887700342,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.323808324934
+          },
+          "pav_raw_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.01335050521,
+            "log_loss_delta": 0.018910040214,
+            "model": "pav_raw",
+            "relative_brier_improvement": 0.223645749858
+          }
+        },
+        "events": 432,
+        "methods": {
+          "beta": {
+            "event_macro_brier": 0.054129864571,
+            "event_macro_log_loss": 0.188243093939,
+            "events_with_violations": 427,
+            "monotonicity_violation_edges": 1127
+          },
+          "pav_beta": {
+            "event_macro_brier": 0.040365177906,
+            "event_macro_log_loss": 0.152345880506,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "pav_raw": {
+            "event_macro_brier": 0.046344370362,
+            "event_macro_log_loss": 0.180323540634,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "platt": {
+            "event_macro_brier": 0.052698084239,
+            "event_macro_log_loss": 0.186231205558,
+            "events_with_violations": 427,
+            "monotonicity_violation_edges": 1127
+          },
+          "raw": {
+            "event_macro_brier": 0.059694875571,
+            "event_macro_log_loss": 0.199233580848,
+            "events_with_violations": 427,
+            "monotonicity_violation_edges": 1127
+          }
+        },
+        "rows": 7776,
+        "utc_days": 10
+      },
+      "900": {
+        "asset_subgroups": {
+          "Bitcoin": {
+            "brier_delta": 0.012613819138,
+            "events": 222
+          },
+          "Ethereum": {
+            "brier_delta": 0.012852156542,
+            "events": 221
+          }
+        },
+        "comparisons": {
+          "beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": -0.002639113054,
+            "log_loss_delta": 0.005482549395,
+            "model": "beta",
+            "relative_brier_improvement": -0.049534416619
+          },
+          "pav_beta_vs_beta": {
+            "baseline": "beta",
+            "brier_delta": 0.015358300122,
+            "log_loss_delta": 0.021785190944,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.274660067928
+          },
+          "pav_beta_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.012719187068,
+            "log_loss_delta": 0.02726774034,
+            "model": "pav_beta",
+            "relative_brier_improvement": 0.238730777543
+          },
+          "pav_raw_vs_raw": {
+            "baseline": "raw",
+            "brier_delta": 0.012732718836,
+            "log_loss_delta": 0.014297920112,
+            "model": "pav_raw",
+            "relative_brier_improvement": 0.238984759935
+          }
+        },
+        "events": 443,
+        "methods": {
+          "beta": {
+            "event_macro_brier": 0.055917484611,
+            "event_macro_log_loss": 0.171195943197,
+            "events_with_violations": 439,
+            "monotonicity_violation_edges": 1142
+          },
+          "pav_beta": {
+            "event_macro_brier": 0.040559184489,
+            "event_macro_log_loss": 0.149410752253,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "pav_raw": {
+            "event_macro_brier": 0.040545652721,
+            "event_macro_log_loss": 0.162380572481,
+            "events_with_violations": 0,
+            "monotonicity_violation_edges": 0
+          },
+          "platt": {
+            "event_macro_brier": 0.055263271349,
+            "event_macro_log_loss": 0.170595405721,
+            "events_with_violations": 439,
+            "monotonicity_violation_edges": 1142
+          },
+          "raw": {
+            "event_macro_brier": 0.053278371558,
+            "event_macro_log_loss": 0.176678492593,
+            "events_with_violations": 439,
+            "monotonicity_violation_edges": 1142
+          }
+        },
+        "rows": 7976,
+        "utc_days": 10
+      }
+    }
+  }
+}
